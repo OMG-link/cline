@@ -51,6 +51,11 @@ export type ApiProvider =
 	| "xiaomi"
 	| "tencent-tokenhub"
 	| "chutes"
+	// OpenAI Compatible account slots (see builtins.ts). Distinct ids so each
+	// gets its own independent config slot; NOT aliased to "openai".
+	| "openai-compatible-1"
+	| "openai-compatible-2"
+	| "openai-compatible-3"
 
 export const DEFAULT_API_PROVIDER = "openrouter" as ApiProvider
 
