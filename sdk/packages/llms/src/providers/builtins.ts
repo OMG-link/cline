@@ -653,6 +653,46 @@ const OPENAI_COMPATIBLE_SPEC_OVERRIDES: BuiltinSpecOverride[] = [
 		apiKeyEnv: ["OPENAI_API_KEY"],
 		defaults: { baseUrl: "https://api.openai.com/v1" },
 	},
+	// Additional OpenAI Compatible slots for users with multiple accounts at the
+	// same (or different) OpenAI-compatible endpoints. Each id is a distinct
+	// provider, so it gets its own independent config slot (apiKey / baseUrl /
+	// model) in providers.json and the ProviderConfigStore. They share
+	// family: "openai-compatible" so inference routes through the same
+	// chat-completions client; per-slot model selection is preserved by
+	// normalizeProviderSwitchModel on switch (see providerSwitchNormalization.ts).
+	{
+		id: "openai-compatible-1",
+		name: "OpenAI Compatible (Spare Slot 1)",
+		description: "OpenAI-compatible chat completions endpoint (spare slot 1)",
+		family: "openai-compatible",
+		popular: 36,
+		capabilities: ["tools"],
+		defaultModelId: "gpt-4o",
+		apiKeyEnv: ["OPENAI_API_KEY"],
+		defaults: { baseUrl: "" },
+	},
+	{
+		id: "openai-compatible-2",
+		name: "OpenAI Compatible (Spare Slot 2)",
+		description: "OpenAI-compatible chat completions endpoint (spare slot 2)",
+		family: "openai-compatible",
+		popular: 37,
+		capabilities: ["tools"],
+		defaultModelId: "gpt-4o",
+		apiKeyEnv: ["OPENAI_API_KEY"],
+		defaults: { baseUrl: "" },
+	},
+	{
+		id: "openai-compatible-3",
+		name: "OpenAI Compatible (Spare Slot 3)",
+		description: "OpenAI-compatible chat completions endpoint (spare slot 3)",
+		family: "openai-compatible",
+		popular: 38,
+		capabilities: ["tools"],
+		defaultModelId: "gpt-4o",
+		apiKeyEnv: ["OPENAI_API_KEY"],
+		defaults: { baseUrl: "" },
+	},
 	cline,
 	clinePass,
 	{

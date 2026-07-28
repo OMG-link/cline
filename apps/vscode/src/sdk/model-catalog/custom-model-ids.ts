@@ -6,7 +6,21 @@ import { toSdkProviderId } from "./sdk-provider-id"
 // list that the user can also bypass (ollama/lmstudio/litellm). For these,
 // the picker must allow arbitrary model ids and model resolution must honor
 // the requested id instead of coercing to the catalog default.
-const CUSTOM_MODEL_ID_PROVIDER_IDS = new Set(["openai-compatible", "ollama", "lmstudio", "litellm"])
+// `openai-compatible-1/2/3` are user-facing OpenAI Compatible account slots
+// registered as builtins (see builtins.ts OPENAI_COMPATIBLE_SPEC_OVERRIDES).
+// They are semantically identical to `openai-compatible` (bring-your-own base
+// URL + model, no curated catalog), so they must accept arbitrary user-supplied
+// model ids too. The runtime ProviderInfo does not expose `family`, so these
+// cannot be detected by family here; list them explicitly alongside the others.
+const CUSTOM_MODEL_ID_PROVIDER_IDS = new Set([
+	"openai-compatible",
+	"openai-compatible-1",
+	"openai-compatible-2",
+	"openai-compatible-3",
+	"ollama",
+	"lmstudio",
+	"litellm",
+])
 
 /**
  * Whether a provider id accepts a user-supplied (custom) model id.
