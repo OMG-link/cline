@@ -28,7 +28,7 @@ import {
 } from "@/shared/proto/cline/models"
 import { fromProtobufModelOverrides, toProtobufModelOverrides } from "@/shared/proto-conversions/models/modelOverrides"
 import { toProtobufModelInfo } from "@/shared/proto-conversions/models/typeConversion"
-import type { GlobalStateAndSettings } from "@/shared/storage/state-keys"
+import type { GlobalState, GlobalStateAndSettings } from "@/shared/storage/state-keys"
 
 export interface ProviderCatalogController {
 	getProviderConfigStore(): ProviderConfigStore
@@ -40,6 +40,7 @@ export interface ProviderCatalogStateController extends ProviderCatalogControlle
 		setGlobalStateBatch(updates: Partial<GlobalStateAndSettings>): void
 		flushPendingState?(): Promise<void>
 		getApiConfiguration?(): ApiConfiguration
+		getGlobalStateKey?<K extends keyof GlobalState>(key: K): GlobalState[K]
 	}
 	handleApiConfigurationChanged?(previous: ApiConfiguration, next: ApiConfiguration): void
 	postStateToWebview?(): Promise<void>

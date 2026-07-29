@@ -2,6 +2,7 @@ import type { ApiConfiguration } from "@shared/api"
 import type { Mode } from "@shared/storage/types"
 import type { StateManager } from "@/core/storage/StateManager"
 import { toLegacyApiProvider } from "@/shared/model-catalog/provider-helpers"
+import { parseProviderId } from "@/sdk/model-catalog/provider-id"
 import { Logger } from "@/shared/services/Logger"
 import type { SdkMessageCoordinator } from "./sdk-message-coordinator"
 import type { SdkSessionConfigBuilder } from "./sdk-session-config-builder"
@@ -40,7 +41,22 @@ function providerForMode(config: ApiConfiguration, mode: Mode): string | undefin
 export class SdkProviderChangeCoordinator {
 	constructor(private readonly options: SdkProviderChangeCoordinatorOptions) {}
 
+	private recordLastUsedProviders(previous: ApiConfiguration, next: ApiConfiguration): void {
+		const record = (prevRaw: string | undefined, nextRaw: string | undefined): void => {
+			const prev = parseProviderId(prevRaw ?? "")
+			const next = parseProviderId(nextRaw ?? "")
+			if (!prev || prev === next) {
+				return
+			}
+			const current = this.options.stateManager.getGlobalStateKey("providerLastUsedAt") ?? {}
+			this.options.stateManager.setGlobalState("providerLastUsedAt", { ...current, [prev]: new Date().toISOString() })
+		}
+		record(previous.actModeApiProvider, next.actModeApiProvider)
+		record(previous.planModeApiProvider, next.planModeApiProvider)
+	}
+
 	handleApiConfigurationChanged(previous: ApiConfiguration, next: ApiConfiguration): void {
+		this.recordLastUsedProviders(previous, next)
 		const mode = this.getCurrentMode()
 		const previousProvider = providerForMode(previous, mode)
 		const nextProvider = providerForMode(next, mode)
