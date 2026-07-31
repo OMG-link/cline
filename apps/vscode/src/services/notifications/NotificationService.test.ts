@@ -102,9 +102,12 @@ describe("NotificationService", () => {
 		// OS notification is NOT called in remote context (runs on remote host, invisible to user)
 		expect(showSystemNotification).not.toHaveBeenCalled()
 		// Companion extension command is called
-		expect(executeCommandSpy).toHaveBeenCalledWith("cline-notify.show", expect.objectContaining({
-			body: "test",
-		}))
+		expect(executeCommandSpy).toHaveBeenCalledWith(
+			"cline-notify.show",
+			expect.objectContaining({
+				body: "test",
+			}),
+		)
 		executeCommandSpy.mockRestore()
 	})
 

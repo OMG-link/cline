@@ -138,10 +138,7 @@ describe("createVscodeGetDiagnosticsTool", () => {
 		mockDiagnosticsToProblemsString.mockResolvedValue("src/index.ts\n- [Error] Line 2: Type error")
 
 		const tool = createVscodeGetDiagnosticsTool()
-		const result = await tool.execute(
-			{ file_path: "/src/index.ts" },
-			{ agentId: "a", iteration: 1 } as never,
-		)
+		const result = await tool.execute({ file_path: "/src/index.ts" }, { agentId: "a", iteration: 1 } as never)
 
 		expect(mockGetDiagnosticsForFile).toHaveBeenCalledWith({
 			filePath: "/src/index.ts",
@@ -154,10 +151,7 @@ describe("createVscodeGetDiagnosticsTool", () => {
 		mockGetDiagnosticsForFile.mockResolvedValue({ fileDiagnostics: [], fileWasOpen: false } as never)
 
 		const tool = createVscodeGetDiagnosticsTool()
-		const result = await tool.execute(
-			{ file_path: "/src/closed.ts" },
-			{ agentId: "a", iteration: 1 } as never,
-		)
+		const result = await tool.execute({ file_path: "/src/closed.ts" }, { agentId: "a", iteration: 1 } as never)
 
 		expect(mockGetDiagnosticsForFile).toHaveBeenCalledWith({
 			filePath: "/src/closed.ts",
@@ -171,10 +165,7 @@ describe("createVscodeGetDiagnosticsTool", () => {
 		mockGetDiagnosticsForFile.mockResolvedValue({ fileDiagnostics: [], fileWasOpen: true } as never)
 
 		const tool = createVscodeGetDiagnosticsTool()
-		const result = await tool.execute(
-			{ file_path: "/src/clean.ts" },
-			{ agentId: "a", iteration: 1 } as never,
-		)
+		const result = await tool.execute({ file_path: "/src/clean.ts" }, { agentId: "a", iteration: 1 } as never)
 
 		expect(result).toBe("No errors or warnings detected.")
 		expect(mockDiagnosticsToProblemsString).not.toHaveBeenCalled()
