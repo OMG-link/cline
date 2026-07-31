@@ -103,7 +103,7 @@ import type { VscodeTerminalExecutionMode } from "./vscode-terminal-execution-mo
 import { WebviewGrpcBridge } from "./webview-grpc-bridge"
 import { resolveWorkspaceRootPath } from "./workspace-root"
 import { WindowFocusTracker } from "@/services/window-focus/WindowFocusTracker"
-import { NotificationService } from "@/services/notifications/NotificationService"
+import { NotificationService, type NotificationRequest } from "@/services/notifications/NotificationService"
 
 /**
  * Log a stub warning and return undefined.
@@ -152,6 +152,25 @@ function historyItemToTaskResponse(item: HistoryItem): TaskResponse {
 		cacheWrites: item.cacheWrites ?? 0,
 		cacheReads: item.cacheReads ?? 0,
 		isLegacy: item.isLegacy ?? false,
+	})
+}
+
+/**
+ * Turn-end notification handler. Suppresses the completion notification while
+ * a mode switch (plan → act) is pending so the user is not alerted for a turn
+ * that will be auto-continued by the mode rebuild.
+ */
+export function handleTurnEnded(
+	phase: "completed" | "awaiting_followup",
+	hasPendingModeChange: boolean,
+	notify: (req: NotificationRequest) => void,
+): void {
+	if (hasPendingModeChange) {
+		return
+	}
+	notify({
+		kind: "completion",
+		message: phase === "completed" ? "Task completed." : "Cline is waiting for you.",
 	})
 }
 
@@ -349,6 +368,13 @@ export class Controller {
 				this.notificationService.notify({
 					kind: "approval",
 					message: "Cline needs your approval.",
+				})
+			},
+			// Fire a notification when the agent asks a question and the window is unfocused.
+			onAskQuestionPending: () => {
+				this.notificationService.notify({
+					kind: "question",
+					message: "Cline has a question for you.",
 				})
 			},
 			recordApprovedToolMessage: (toolCallId, messageTs) =>
@@ -641,12 +667,8 @@ export class Controller {
 			setTurnPhase: (phase, anchorTs) => this.turnStateTracker.set(phase, anchorTs),
 			captureProviderApiError: (event) => this.captureProviderFailure(event),
 			beginProviderFailureTelemetryTurn: () => this.beginProviderFailureTelemetryTurn(),
-			onTurnEnded: (phase) => {
-				this.notificationService.notify({
-					kind: "completion",
-					message: phase === "completed" ? "Task completed." : "Cline needs your input.",
-				})
-			},
+			onTurnEnded: (phase) =>
+				handleTurnEnded(phase, this.mode.hasPendingModeChange(), (req) => this.notificationService.notify(req)),
 			onApiError: () => {
 				this.notificationService.notify({
 					kind: "error",

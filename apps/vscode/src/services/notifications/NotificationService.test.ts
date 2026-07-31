@@ -76,6 +76,19 @@ describe("NotificationService", () => {
 		expect(call.subtitle).toBe("Task Complete")
 	})
 
+	it("dispatches a question notification with the correct subtitle", () => {
+		const svc = new NotificationService({
+			stateManager: makeStateManager(true),
+			focusTracker: makeFocusTracker(false),
+		})
+		svc.notify({ kind: "question", message: "Which framework?" })
+
+		expect(showSystemNotification).toHaveBeenCalledOnce()
+		const call = (showSystemNotification as ReturnType<typeof vi.fn>).mock.calls[0][0]
+		expect(call.subtitle).toBe("Question")
+		expect(call.message).toBe("Which framework?")
+	})
+
 	it("dispatches companion command (not OS notification) in remote context", () => {
 		;(vscode.env as { remoteName: string | undefined }).remoteName = "ssh-remote"
 		const executeCommandSpy = vi.spyOn(vscode.commands, "executeCommand").mockResolvedValue(undefined)

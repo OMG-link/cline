@@ -4,7 +4,7 @@ import { Logger } from "@/shared/services/Logger"
 import { showSystemNotification } from "@/integrations/notifications"
 import type { WindowFocusTracker } from "@/services/window-focus/WindowFocusTracker"
 
-export type NotificationKind = "approval" | "completion" | "error"
+export type NotificationKind = "approval" | "completion" | "error" | "question"
 
 export interface NotificationRequest {
 	kind: NotificationKind
@@ -108,6 +108,8 @@ export class NotificationService {
 				return "Cline – Task Complete"
 			case "error":
 				return "Cline – Error"
+			case "question":
+				return "Cline – Question"
 		}
 	}
 
@@ -119,6 +121,8 @@ export class NotificationService {
 				return "Task Complete"
 			case "error":
 				return "Error"
+			case "question":
+				return "Question"
 		}
 	}
 

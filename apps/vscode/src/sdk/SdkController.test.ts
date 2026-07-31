@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest"
+import { describe, expect, it, vi } from "vitest"
 import { isClineManagedProvider } from "@/shared/utils/cline"
+import { handleTurnEnded } from "./SdkController"
 import { resolveWorkspaceRootPath } from "./workspace-root"
 
 describe("isClineManagedProvider", () => {
@@ -18,5 +19,31 @@ describe("resolveWorkspaceRootPath", () => {
 
 	it("falls back to Desktop when no workspace folder is open", () => {
 		expect(resolveWorkspaceRootPath([], "/Users/tester/Desktop")).toBe("/Users/tester/Desktop")
+	})
+})
+
+describe("handleTurnEnded", () => {
+	it("suppresses the notification when a mode change is pending", () => {
+		const notify = vi.fn()
+		handleTurnEnded("awaiting_followup", true, notify)
+		expect(notify).not.toHaveBeenCalled()
+	})
+
+	it("fires a completion notification when no mode change is pending", () => {
+		const notify = vi.fn()
+		handleTurnEnded("completed", false, notify)
+		expect(notify).toHaveBeenCalledWith({
+			kind: "completion",
+			message: "Task completed.",
+		})
+	})
+
+	it("uses the waiting-for-you message for awaiting_followup phase", () => {
+		const notify = vi.fn()
+		handleTurnEnded("awaiting_followup", false, notify)
+		expect(notify).toHaveBeenCalledWith({
+			kind: "completion",
+			message: "Cline is waiting for you.",
+		})
 	})
 })

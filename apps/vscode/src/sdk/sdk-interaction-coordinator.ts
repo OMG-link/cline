@@ -48,6 +48,12 @@ export interface SdkInteractionCoordinatorOptions {
 	 * (OS toast / VS Code notification) when the window is not focused.
 	 */
 	onToolApprovalPending?: (toolName: string, input: unknown) => void
+	/**
+	 * Invoked AFTER the ask_question message has been emitted and the turn phase
+	 * set to `awaiting_followup`. Used by the NotificationService to alert the user
+	 * (OS toast / VS Code notification) when the window is not focused.
+	 */
+	onAskQuestionPending?: (question: string, options: string[]) => void
 }
 
 export class SdkInteractionCoordinator {
@@ -152,6 +158,13 @@ export class SdkInteractionCoordinator {
 		})
 		this.options.setTurnPhase?.("awaiting_followup", askMessage.ts)
 		await this.options.postStateToWebview()
+
+		// Fire notification (OS toast / VS Code API) if the window is unfocused.
+		try {
+			this.options.onAskQuestionPending?.(question, options)
+		} catch (error) {
+			Logger.warn(`[SdkController] onAskQuestionPending callback failed: ${error}`)
+		}
 
 		return new Promise<string>((resolve) => {
 			this.pendingAskResolve = resolve
