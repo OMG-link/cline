@@ -4,6 +4,7 @@ import type { VscodeTerminalManager } from "@/hosts/vscode/terminal/VscodeTermin
 import type { McpHub } from "@/services/mcp/McpHub"
 import { Logger } from "@/shared/services/Logger"
 import type { SdkForegroundCommandCoordinator } from "./sdk-foreground-command-coordinator"
+import { createVscodeGetDiagnosticsTool } from "./vscode-get-diagnostics-tool"
 import { createVscodeRunCommandsTool, VSCODE_FOREGROUND_RUN_COMMANDS_TIMEOUT_MS } from "./vscode-run-commands-tool"
 
 interface McpToolDescriptor {
@@ -82,6 +83,9 @@ export async function createVscodeExtraTools(mcpHub: McpHub, options?: VscodeExt
 	// response, and the turn-end inference in message-translator.ts styles that
 	// final text as the completion feedback row.
 	const tools: AgentTool[] = [...mcpTools.flat()]
+
+	// VS Code-specific tool: read workspace diagnostics (the Problems panel).
+	tools.push(createVscodeGetDiagnosticsTool())
 
 	// Add the custom run_commands tool when a terminal manager is available.
 	// This replaces the SDK's built-in run_commands, which is suppressed via
