@@ -4,6 +4,7 @@ vi.mock("@/hosts/host-provider", () => ({
 	HostProvider: {
 		workspace: {
 			getDiagnostics: vi.fn(),
+			getDiagnosticsForFile: vi.fn(),
 		},
 	},
 }))
@@ -18,6 +19,7 @@ import { DiagnosticSeverity, type FileDiagnostics } from "@/shared/proto/index.c
 import { createVscodeGetDiagnosticsTool } from "./vscode-get-diagnostics-tool"
 
 const mockGetDiagnostics = vi.mocked(HostProvider.workspace.getDiagnostics)
+const mockGetDiagnosticsForFile = vi.mocked(HostProvider.workspace.getDiagnosticsForFile)
 const mockDiagnosticsToProblemsString = vi.mocked(diagnosticsToProblemsString)
 
 function makeFileDiagnostics(): FileDiagnostics[] {
@@ -45,7 +47,6 @@ describe("createVscodeGetDiagnosticsTool", () => {
 		expect(tool.name).toBe("get_diagnostics")
 		expect(tool.description).toContain("diagnostics")
 		expect(tool.description).toContain("Problems panel")
-		expect(tool.description).toContain("Only reports diagnostics for files that are currently open")
 		expect(tool.inputSchema).toMatchObject({
 			type: "object",
 			properties: {
@@ -53,6 +54,7 @@ describe("createVscodeGetDiagnosticsTool", () => {
 					type: "array",
 					items: { type: "string", enum: ["error", "warning", "information", "hint"] },
 				},
+				file_path: { type: "string" },
 			},
 		})
 	})
@@ -63,7 +65,7 @@ describe("createVscodeGetDiagnosticsTool", () => {
 		mockDiagnosticsToProblemsString.mockResolvedValue("src/index.ts\n- [Error] Line 2: Type error")
 
 		const tool = createVscodeGetDiagnosticsTool()
-		const result = await tool.execute({}, {} as never)
+		const result = await tool.execute({}, { agentId: "a", iteration: 1 } as never)
 
 		expect(result).toBe("src/index.ts\n- [Error] Line 2: Type error")
 		expect(mockDiagnosticsToProblemsString).toHaveBeenCalledWith(fileDiagnostics, [
@@ -76,7 +78,7 @@ describe("createVscodeGetDiagnosticsTool", () => {
 		mockGetDiagnostics.mockResolvedValue({ fileDiagnostics: [] } as never)
 
 		const tool = createVscodeGetDiagnosticsTool()
-		const result = await tool.execute({}, {} as never)
+		const result = await tool.execute({}, { agentId: "a", iteration: 1 } as never)
 
 		expect(result).toBe("No errors or warnings detected.")
 		expect(mockDiagnosticsToProblemsString).not.toHaveBeenCalled()
@@ -87,7 +89,7 @@ describe("createVscodeGetDiagnosticsTool", () => {
 		mockDiagnosticsToProblemsString.mockResolvedValue("formatted output")
 
 		const tool = createVscodeGetDiagnosticsTool()
-		await tool.execute({}, {} as never)
+		await tool.execute({}, { agentId: "a", iteration: 1 } as never)
 
 		expect(mockDiagnosticsToProblemsString).toHaveBeenCalledWith(expect.any(Array), [
 			DiagnosticSeverity.DIAGNOSTIC_ERROR,
@@ -100,7 +102,7 @@ describe("createVscodeGetDiagnosticsTool", () => {
 		mockDiagnosticsToProblemsString.mockResolvedValue("formatted output")
 
 		const tool = createVscodeGetDiagnosticsTool()
-		await tool.execute({ severities: ["error"] }, {} as never)
+		await tool.execute({ severities: ["error"] }, { agentId: "a", iteration: 1 } as never)
 
 		expect(mockDiagnosticsToProblemsString).toHaveBeenCalledWith(expect.any(Array), [DiagnosticSeverity.DIAGNOSTIC_ERROR])
 	})
@@ -110,7 +112,7 @@ describe("createVscodeGetDiagnosticsTool", () => {
 		mockDiagnosticsToProblemsString.mockResolvedValue("formatted output")
 
 		const tool = createVscodeGetDiagnosticsTool()
-		await tool.execute({ severities: ["error", "hint"] }, {} as never)
+		await tool.execute({ severities: ["error", "hint"] }, { agentId: "a", iteration: 1 } as never)
 
 		expect(mockDiagnosticsToProblemsString).toHaveBeenCalledWith(expect.any(Array), [
 			DiagnosticSeverity.DIAGNOSTIC_ERROR,
@@ -123,8 +125,58 @@ describe("createVscodeGetDiagnosticsTool", () => {
 		mockDiagnosticsToProblemsString.mockResolvedValue("")
 
 		const tool = createVscodeGetDiagnosticsTool()
-		const result = await tool.execute({ severities: ["hint"] }, {} as never)
+		const result = await tool.execute({ severities: ["hint"] }, { agentId: "a", iteration: 1 } as never)
 
 		expect(result).toBe("No diagnostics matching the specified severity filters were found.")
+	})
+
+	// --- file_path branch tests ---
+
+	it("calls getDiagnosticsForFile when file_path is specified and returns diagnostics", async () => {
+		const fileDiagnostics = makeFileDiagnostics()
+		mockGetDiagnosticsForFile.mockResolvedValue({ fileDiagnostics } as never)
+		mockDiagnosticsToProblemsString.mockResolvedValue("src/index.ts\n- [Error] Line 2: Type error")
+
+		const tool = createVscodeGetDiagnosticsTool()
+		const result = await tool.execute(
+			{ file_path: "/src/index.ts" },
+			{ agentId: "a", iteration: 1 } as never,
+		)
+
+		expect(mockGetDiagnosticsForFile).toHaveBeenCalledWith({
+			filePath: "/src/index.ts",
+		})
+		expect(mockGetDiagnostics).not.toHaveBeenCalled()
+		expect(result).toBe("src/index.ts\n- [Error] Line 2: Type error")
+	})
+
+	it("returns 'ask the user to open' message when file is not open", async () => {
+		mockGetDiagnosticsForFile.mockResolvedValue({ fileDiagnostics: [], fileWasOpen: false } as never)
+
+		const tool = createVscodeGetDiagnosticsTool()
+		const result = await tool.execute(
+			{ file_path: "/src/closed.ts" },
+			{ agentId: "a", iteration: 1 } as never,
+		)
+
+		expect(mockGetDiagnosticsForFile).toHaveBeenCalledWith({
+			filePath: "/src/closed.ts",
+		})
+		expect(mockDiagnosticsToProblemsString).not.toHaveBeenCalled()
+		expect(result).toContain("not open")
+		expect(result).toContain("ask the user to open")
+	})
+
+	it("returns 'no errors' when file is open but has no diagnostics", async () => {
+		mockGetDiagnosticsForFile.mockResolvedValue({ fileDiagnostics: [], fileWasOpen: true } as never)
+
+		const tool = createVscodeGetDiagnosticsTool()
+		const result = await tool.execute(
+			{ file_path: "/src/clean.ts" },
+			{ agentId: "a", iteration: 1 } as never,
+		)
+
+		expect(result).toBe("No errors or warnings detected.")
+		expect(mockDiagnosticsToProblemsString).not.toHaveBeenCalled()
 	})
 })
