@@ -19,4 +19,26 @@ describe("isToolAutoApproved", () => {
 
 		expect(isToolAutoApproved("run_commands", settings)).toBe(false)
 	})
+
+	it("auto-approves get_diagnostics when readFiles is enabled", () => {
+		const settings = {
+			...DEFAULT_AUTO_APPROVAL_SETTINGS,
+			actions: {
+				...DEFAULT_AUTO_APPROVAL_SETTINGS.actions,
+				readFiles: true,
+			},
+		}
+		expect(isToolAutoApproved("get_diagnostics", settings)).toBe(true)
+	})
+
+	it("does not auto-approve get_diagnostics when readFiles is disabled", () => {
+		const settings = {
+			...DEFAULT_AUTO_APPROVAL_SETTINGS,
+			actions: {
+				...DEFAULT_AUTO_APPROVAL_SETTINGS.actions,
+				readFiles: false,
+			},
+		}
+		expect(isToolAutoApproved("get_diagnostics", settings)).toBe(false)
+	})
 })
