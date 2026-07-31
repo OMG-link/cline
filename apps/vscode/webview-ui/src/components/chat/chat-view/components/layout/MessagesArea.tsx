@@ -9,6 +9,7 @@ import { cn } from "@/lib/utils"
 import { useThinkingLoaderRow } from "../../hooks/useThinkingLoaderRow"
 import type { ChatState, MessageHandlers, ScrollBehavior } from "../../types/chatTypes"
 import { isPendingResponseUnconfirmed } from "../../utils/pendingResponse"
+import { isSummaryMessage } from "../../utils/messageUtils"
 import { createMessageRenderer } from "../messages/MessageRenderer"
 
 // Sentinel ts for the synthetic "Thinking..." placeholder row. Not a real message; ignored when
@@ -163,6 +164,55 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 			scrollToBottomSmooth()
 		}
 	}, [turnState?.phase, scrollToBottomSmooth, disableAutoScrollRef])
+
+	// Scroll to the top of a turn-final summary message (plan_completion_result
+	// or completion_result) when the turn ends. Only fires if the user hasn't
+	// manually scrolled away from the bottom; if they scrolled up to read
+	// earlier content, their position is respected.
+	const scrolledSummaryTsRef = useRef<number | null>(null)
+	useEffect(() => {
+		const phase = turnState?.phase
+		if (phase !== "completed" && phase !== "awaiting_followup") return
+
+		// Search backwards from the tail for a summary message. The done event
+		// may emit a trailing api_req_started after the completion_result, so the
+		// summary might not be the very last message. Limit the search to the
+		// last 3 messages to skip the trailing api_req_started while avoiding a
+		// match from an earlier turn.
+		const searchLimit = Math.max(0, clineMessages.length - 3)
+		let targetIndex = -1
+		for (let i = clineMessages.length - 1; i >= searchLimit; i--) {
+			if (isSummaryMessage(clineMessages[i])) {
+				targetIndex = i
+				break
+			}
+		}
+		// No target (e.g. switch_to_act_mode, or summary not yet available) -> skip
+		if (targetIndex === -1) return
+
+		const target = clineMessages[targetIndex]
+
+		// Don't fire twice for the same summary message
+		if (scrolledSummaryTsRef.current === target.ts) return
+
+		// Respect the user's scroll position: only auto-scroll if they haven't
+		// manually scrolled away from the bottom. disableAutoScrollRef is false
+		// when auto-scroll is engaged (user followed the streaming auto-scroll),
+		// true when the user scrolled up. Unlike isAtBottom (a Virtuoso state
+		// that flips to false momentarily when new content is appended),
+		// disableAutoScrollRef only changes on explicit user wheel-up or
+		// re-arrival at the bottom.
+		if (disableAutoScrollRef.current) return
+
+		// Suppress the bottom-pinning effect's 50ms settle timer so it does not
+		// fire after this scrollToMessage and yank the viewport back to the
+		// bottom. scrollToMessage also sets this internally, but setting it here
+		// blocks the settle timer before it is scheduled.
+		disableAutoScrollRef.current = true
+
+		scrolledSummaryTsRef.current = target.ts
+		scrollToMessage(targetIndex)
+	}, [turnState?.phase, clineMessages, scrollToMessage, disableAutoScrollRef])
 
 	const itemContent = useMemo(
 		() =>

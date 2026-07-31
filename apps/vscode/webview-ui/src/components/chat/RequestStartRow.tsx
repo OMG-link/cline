@@ -5,7 +5,7 @@ import type React from "react"
 import { useMemo } from "react"
 import { cleanPathPrefix } from "../common/CodeAccordian"
 import { getIconByToolName } from "./chat-view"
-import { isApiReqAbsorbable, isLowStakesTool } from "./chat-view/utils/messageUtils"
+import { isApiReqAbsorbable, isLowStakesTool, isSummaryMessage } from "./chat-view/utils/messageUtils"
 import ErrorRow from "./ErrorRow"
 import { ThinkingRow } from "./ThinkingRow"
 import { TypewriterText } from "./TypewriterText"
@@ -145,13 +145,7 @@ export const RequestStartRow: React.FC<RequestStartRowProps> = ({
 	const hasError = !!(apiRequestFailedMessage || apiReqStreamingFailedMessage)
 	const hasCost = cost != null
 	const hasReasoning = !!reasoningContent
-	const hasCompletionResult = clineMessages.some(
-		(msg) =>
-			msg.ask === "completion_result" ||
-			msg.say === "completion_result" ||
-			msg.say === "plan_completion_result" ||
-			msg.ask === "plan_mode_respond",
-	)
+	const hasCompletionResult = clineMessages.some(isSummaryMessage)
 
 	const apiReqState: ApiReqState = hasError ? "error" : hasCost ? "final" : hasReasoning ? "thinking" : "pre"
 
