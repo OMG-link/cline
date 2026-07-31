@@ -1,8 +1,8 @@
 import * as vscode from "vscode"
 import type { StateManager } from "@/core/storage/StateManager"
-import { Logger } from "@/shared/services/Logger"
 import { showSystemNotification } from "@/integrations/notifications"
 import type { WindowFocusTracker } from "@/services/window-focus/WindowFocusTracker"
+import { Logger } from "@/shared/services/Logger"
 
 export type NotificationKind = "approval" | "completion" | "error" | "question"
 

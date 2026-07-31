@@ -132,7 +132,11 @@ export class SdkSessionEventCoordinator {
 					// offer error recovery (Retry / Start New Task), not the followup state.
 					this.options.setTurnPhase?.("error")
 					// Fire notification for API errors (rate limit, network failure, etc.)
-					try { this.options.onApiError?.() } catch (err) { Logger.warn("[SdkController] onApiError callback failed", err) }
+					try {
+						this.options.onApiError?.()
+					} catch (err) {
+						Logger.warn("[SdkController] onApiError callback failed", err)
+					}
 				} else if (this.options.messageTranslatorState.wasAttemptCompletionSeen()) {
 					this.options.setTurnPhase?.("completed")
 					turnEndPhase = "completed"

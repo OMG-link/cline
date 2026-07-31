@@ -6,8 +6,8 @@
  * This is an IDE-level feature built on top of the SDK, NOT part of the SDK.
  */
 
-import { createTool } from "@cline/shared"
 import type { AgentTool } from "@cline/shared"
+import { createTool } from "@cline/shared"
 import { HostProvider } from "@/hosts/host-provider"
 import { diagnosticsToProblemsString } from "@/integrations/diagnostics"
 import { DiagnosticSeverity, type FileDiagnostics } from "@/shared/proto/index.cline"
