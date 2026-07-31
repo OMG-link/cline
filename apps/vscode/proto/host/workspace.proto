@@ -21,6 +21,11 @@ service WorkspaceService {
   // Get diagnostics from the workspace.
   rpc getDiagnostics(GetDiagnosticsRequest) returns (GetDiagnosticsResponse);
 
+  // Get diagnostics for a specific file. The file must already be open
+  // in the editor; if not, file_was_open is false and no diagnostics
+  // are returned.
+  rpc getDiagnosticsForFile(GetDiagnosticsForFileRequest) returns (GetDiagnosticsForFileResponse);
+
   // Makes the problems panel/pane visible in the IDE and focuses it.
   rpc openProblemsPanel(OpenProblemsPanelRequest) returns (OpenProblemsPanelResponse);
 
@@ -72,6 +77,15 @@ message GetDiagnosticsRequest {
 
 message GetDiagnosticsResponse {
   repeated cline.FileDiagnostics file_diagnostics = 1;
+}
+
+message GetDiagnosticsForFileRequest {
+  string file_path = 1;
+}
+
+message GetDiagnosticsForFileResponse {
+  repeated cline.FileDiagnostics file_diagnostics = 1;
+  bool file_was_open = 2;
 }
 
 // Request for host-side workspace search (files/folders) used by mentions autocomplete
