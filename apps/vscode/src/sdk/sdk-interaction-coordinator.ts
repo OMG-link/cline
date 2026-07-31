@@ -42,6 +42,12 @@ export interface SdkInteractionCoordinatorOptions {
 	 * looking at the actual change. Must not throw; failures fall back to a plain ask.
 	 */
 	onToolApprovalAsk?: (request: ToolApprovalRequest) => Promise<void>
+	/**
+	 * Invoked AFTER the tool-approval ask message has been emitted and the turn phase
+	 * set to `awaiting_approval`. Used by the NotificationService to alert the user
+	 * (OS toast / VS Code notification) when the window is not focused.
+	 */
+	onToolApprovalPending?: (toolName: string, input: unknown) => void
 }
 
 export class SdkInteractionCoordinator {
@@ -109,6 +115,13 @@ export class SdkInteractionCoordinator {
 		})
 		this.options.setTurnPhase?.("awaiting_approval", toolAskMessage.ts)
 		await this.options.postStateToWebview()
+
+		// Fire notification (OS toast / VS Code API) if the window is unfocused.
+		try {
+			this.options.onToolApprovalPending?.(request.toolName, request.input)
+		} catch (error) {
+			Logger.warn(`[SdkController] onToolApprovalPending callback failed: ${error}`)
+		}
 
 		return new Promise<{ approved: boolean; reason?: string }>((resolve) => {
 			this.pendingToolApprovalResolve = resolve

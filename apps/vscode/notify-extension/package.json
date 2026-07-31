@@ -1,0 +1,26 @@
+{
+  "name": "cline-notify",
+  "displayName": "Cline Notify",
+  "description": "Companion extension that shows native OS notifications for Cline. Runs locally (UI host) so it works in Remote-SSH.",
+  "version": "0.0.1",
+  "publisher": "cline",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "extensionKind": [
+    "ui"
+  ],
+  "activationEvents": [],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "cline-notify.show",
+        "title": "Cline Notify: Show Notification"
+      }
+    ]
+  },
+  "scripts": {
+    "build": "bunx tsc --noEmit && bunx esbuild src/extension.ts --bundle --platform=node --format=cjs --outfile=dist/extension.js --external:vscode"
+  }
+}

@@ -75,6 +75,11 @@ export class VscodeWebviewProvider extends WebviewProvider implements vscode.Web
 		this.setWebviewMessageListener(webviewView.webview)
 		telemetryService.capturePanelOpened("sidebar_resolved")
 
+		// Wire the webview post-message bridge into the NotificationService so
+		// it can ask the webview (local renderer) to fire a browser Notification
+		// in Remote-SSH scenarios.
+		this.controller.setNotificationWebviewBridge((message) => Promise.resolve(webviewView.webview.postMessage(message)))
+
 		// Logs show up in bottom panel > Debug Console
 		//Logger.log("registering listener")
 

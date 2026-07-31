@@ -37,6 +37,17 @@ export interface SdkSessionEventCoordinatorOptions {
 	setTurnPhase?: (phase: TurnPhase, anchorTs?: number) => void
 	captureProviderApiError?: (event: ProviderFailureTelemetry) => void
 	beginProviderFailureTelemetryTurn?: () => void
+	/**
+	 * Invoked when a turn ends (phase set to `completed` or `awaiting_followup`).
+	 * `phase` is "completed" when `attempt_completion` was used.
+	 * Used by the NotificationService to alert the user when the window is not focused.
+	 */
+	onTurnEnded?: (phase: "completed" | "awaiting_followup") => void
+	/**
+	 * Invoked when a turn ends with an error (phase set to `error`).
+	 * Used by the NotificationService to alert the user when the window is not focused.
+	 */
+	onApiError?: () => void
 }
 
 export class SdkSessionEventCoordinator {
@@ -106,16 +117,31 @@ export class SdkSessionEventCoordinator {
 				// "resumable" and aborted). Overwriting it here would clobber "resumable" with
 				// "awaiting_followup"/"completed" and the footer would lose the Resume Task button
 				// (showing the scroll-arrow default instead), so the cancel-set phase is preserved.
+				let turnEndPhase: "completed" | "awaiting_followup" = "awaiting_followup"
 				if (!activeSession.isRunning) {
 					Logger.debug("[SdkController] turn-complete straggler after cancel; preserving resumable phase")
 				} else if (this.options.messageTranslatorState.wasErrorSeen()) {
 					// The turn surfaced a provider error (ask:"api_req_failed" was emitted) —
 					// offer error recovery (Retry / Start New Task), not the followup state.
 					this.options.setTurnPhase?.("error")
+					// Fire notification for API errors (rate limit, network failure, etc.)
+					try { this.options.onApiError?.() } catch (err) { Logger.warn("[SdkController] onApiError callback failed", err) }
 				} else if (this.options.messageTranslatorState.wasAttemptCompletionSeen()) {
 					this.options.setTurnPhase?.("completed")
+					turnEndPhase = "completed"
 				} else {
 					this.options.setTurnPhase?.("awaiting_followup")
+				}
+
+				// Fire notification for both completed and awaiting_followup – in both
+				// cases the agent has stopped and needs the user's attention. Skip for
+				// cancel stragglers (isRunning already false) and error turns.
+				if (activeSession.isRunning && !this.options.messageTranslatorState.wasErrorSeen()) {
+					try {
+						this.options.onTurnEnded?.(turnEndPhase)
+					} catch (err) {
+						Logger.warn("[SdkController] onTurnEnded callback failed", err)
+					}
 				}
 
 				this.options.sessions.setRunning(false)

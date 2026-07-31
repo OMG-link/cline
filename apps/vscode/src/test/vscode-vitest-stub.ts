@@ -8,6 +8,7 @@ export const env = {
 		writeText: async () => undefined,
 	},
 	openExternal: async () => true,
+	remoteName: undefined as string | undefined,
 }
 export const workspace = {
 	workspaceFolders: [],
@@ -23,6 +24,8 @@ export const window = {
 		onDidChangeTabs: () => ({ dispose: noop }),
 		close: async () => true,
 	},
+	state: { focused: false } as { focused: boolean },
+	onDidChangeWindowState: (_listener: (state: { focused: boolean }) => void) => ({ dispose: noop }),
 	showInformationMessage: async () => undefined,
 	showWarningMessage: async () => undefined,
 	showErrorMessage: async () => undefined,
