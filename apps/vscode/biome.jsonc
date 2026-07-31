@@ -153,7 +153,8 @@
 				"!!src/extension.ts",
 				"!!src/integrations/git/commit-message-generator.ts",
 				"!!src/integrations/terminal/**",
-				"!!src/core/controller/ui/openWalkthrough.ts"
+				"!!src/core/controller/ui/openWalkthrough.ts",
+				"!!**/notify-extension/**"
 			],
 			"plugins": [
 				"src/dev/grit/vscode-api.grit"
@@ -182,7 +183,8 @@
 				"!!**/*.js",
 				"!!**/scripts/**",
 				"!!**/*.tsx",
-				"!!**/testing-platform/**"
+				"!!**/testing-platform/**",
+				"!!**/notify-extension/**"
 			]
 		},
 		{

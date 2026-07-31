@@ -105,6 +105,8 @@ import { VscodeSessionHost } from "./vscode-session-host"
 import type { VscodeTerminalExecutionMode } from "./vscode-terminal-execution-mode"
 import { WebviewGrpcBridge } from "./webview-grpc-bridge"
 import { resolveWorkspaceRootPath } from "./workspace-root"
+import { WindowFocusTracker } from "@/services/window-focus/WindowFocusTracker"
+import { NotificationService } from "@/services/notifications/NotificationService"
 
 /**
  * Log a stub warning and return undefined.
@@ -160,6 +162,7 @@ function historyItemToTaskResponse(item: HistoryItem): TaskResponse {
 // Controller
 // ---------------------------------------------------------------------------
 
+
 export class Controller {
 	// SDK session state and the coordinators that drive it.
 	private messageTranslatorState: MessageTranslatorState
@@ -181,6 +184,8 @@ export class Controller {
 	private compaction: SdkCompactionCoordinator
 	private sessionEvents: SdkSessionEventCoordinator
 	private sessionHistory: SdkSessionHistoryLoader
+	private focusTracker: WindowFocusTracker
+	private notificationService: NotificationService
 	private readonly sdkTelemetry: VscodeSdkTelemetryHandle
 	private readonly providerFailureTelemetryTurnGate = new ProviderFailureTelemetryTurnGate()
 	private readonly providerConfigStore: ProviderConfigStore
@@ -253,6 +258,16 @@ export class Controller {
 
 	get remoteConfigBundle(): RemoteConfigBundle | undefined {
 		return this.remoteConfigCoreIntegration?.prepared.bundle
+	}
+
+	/**
+	 * Wire the webview post-message bridge into the NotificationService so it
+	 * can ask the webview (local renderer) to fire a browser Notification in
+	 * Remote-SSH scenarios. Called by VscodeWebviewProvider once the webview
+	 * view is resolved.
+	 */
+	setNotificationWebviewBridge(postToWebview: (message: unknown) => Promise<boolean | undefined>): void {
+		this.notificationService.setPostToWebview(postToWebview)
 	}
 
 	constructor(readonly context: ClineExtensionContext) {
@@ -328,6 +343,14 @@ export class Controller {
 			getCwd: () => this.getWorkspaceRoot(),
 			isBackgroundEditEnabled: () => !!this.stateManager.getGlobalSettingsKey("backgroundEditEnabled"),
 		})
+		// Window focus tracker and notification service – used by the interaction
+		// and session-event coordinators to alert the user when the VS Code window
+		// is not focused and a tool approval or task completion is pending.
+		this.focusTracker = new WindowFocusTracker()
+		this.notificationService = new NotificationService({
+			stateManager: this.stateManager,
+			focusTracker: this.focusTracker,
+		})
 		this.interactions = new SdkInteractionCoordinator({
 			messages: this.messages,
 			getSessionId: () => this.sessions.getActiveSession()?.sessionId ?? "",
@@ -338,6 +361,13 @@ export class Controller {
 			setTurnPhase: (phase, anchorTs) => this.turnStateTracker.set(phase, anchorTs),
 			// Open the diff editor preview before the approval buttons render.
 			onToolApprovalAsk: (request) => this.diffEdits.openForApproval(request.toolCallId, request.toolName, request.input),
+			// Fire an OS / VS Code notification when the window is unfocused.
+			onToolApprovalPending: () => {
+				this.notificationService.notify({
+					kind: "approval",
+					message: "Cline needs your approval.",
+				})
+			},
 			recordApprovedToolMessage: (toolCallId, messageTs) =>
 				this.messageTranslatorState.recordApprovedToolMessageTs(toolCallId, messageTs),
 			recordDeniedToolApproval: (toolCallId, toolName, reason) => {
@@ -630,6 +660,18 @@ export class Controller {
 			getTurnPhase: () => this.turnStateTracker.currentPhase,
 			captureProviderApiError: (event) => this.captureProviderFailure(event),
 			beginProviderFailureTelemetryTurn: () => this.beginProviderFailureTelemetryTurn(),
+			onTurnEnded: (phase) => {
+				this.notificationService.notify({
+					kind: "completion",
+					message: phase === "completed" ? "Task completed." : "Cline needs your input.",
+				})
+			},
+			onApiError: () => {
+				this.notificationService.notify({
+					kind: "error",
+					message: "Cline encountered an error and needs your attention.",
+				})
+			},
 		})
 		// Subscribe to MCP tool list changes so we can restart the SDK session
 		// when servers are added/removed/reconnected. The SDK's DefaultSessionBuilder
@@ -801,6 +843,7 @@ export class Controller {
 		this.mcpHub?.dispose?.()
 		this.messages.dispose()
 		await this.sdkTelemetry.dispose()
+		this.focusTracker.dispose()
 		Logger.log("[SdkController] Disposed")
 	}
 

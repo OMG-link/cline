@@ -31,4 +31,10 @@ export const ACTION_METADATA: ActionMetadata[] = [
 		shortName: "MCP",
 		icon: "codicon-server",
 	},
+	{
+		id: "enableNotifications",
+		label: "Notifications",
+		shortName: "Notifications",
+		icon: "codicon-bell",
+	},
 ]
