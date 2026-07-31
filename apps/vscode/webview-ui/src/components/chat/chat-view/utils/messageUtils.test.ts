@@ -1,6 +1,12 @@
 import type { ClineMessage } from "@shared/ExtensionMessage"
 import { describe, expect, it } from "vitest"
-import { canRestoreWorkspaceFromMessage, filterVisibleMessages, groupLowStakesTools, isToolGroup } from "./messageUtils"
+import {
+	canRestoreWorkspaceFromMessage,
+	filterVisibleMessages,
+	groupLowStakesTools,
+	isSummaryMessage,
+	isToolGroup,
+} from "./messageUtils"
 
 const createTextMessage = (ts: number, text: string): ClineMessage => ({
 	type: "say",
@@ -165,5 +171,39 @@ describe("groupLowStakesTools", () => {
 		expect(grouped).toHaveLength(2)
 		expect(grouped[0]).toMatchObject({ type: "say", say: "reasoning", text: "Planning next read" })
 		expect(isToolGroup(grouped[1])).toBe(true)
+	})
+})
+
+describe("isSummaryMessage", () => {
+	it("identifies plan_mode_respond ask as a summary", () => {
+		expect(isSummaryMessage({ type: "ask", ask: "plan_mode_respond", text: "{}", ts: 1 })).toBe(true)
+	})
+
+	it("identifies completion_result say as a summary", () => {
+		expect(isSummaryMessage({ type: "say", say: "completion_result", text: "Done", ts: 1 })).toBe(true)
+	})
+
+	it("identifies completion_result ask as a summary", () => {
+		expect(isSummaryMessage({ type: "ask", ask: "completion_result", text: "Done", ts: 1 })).toBe(true)
+	})
+
+	it("identifies plan_completion_result say as a summary", () => {
+		expect(isSummaryMessage({ type: "say", say: "plan_completion_result", text: "Here is the plan", ts: 1 })).toBe(true)
+	})
+
+	it("does not identify followup ask as a summary", () => {
+		expect(isSummaryMessage({ type: "ask", ask: "followup", text: "{}", ts: 1 })).toBe(false)
+	})
+
+	it("does not identify regular text say as a summary", () => {
+		expect(isSummaryMessage({ type: "say", say: "text", text: "hello", ts: 1 })).toBe(false)
+	})
+
+	it("does not identify tool say as a summary", () => {
+		expect(isSummaryMessage({ type: "say", say: "tool", text: "{}", ts: 1 })).toBe(false)
+	})
+
+	it("does not identify reasoning say as a summary", () => {
+		expect(isSummaryMessage({ type: "say", say: "reasoning", text: "thinking", ts: 1 })).toBe(false)
 	})
 })

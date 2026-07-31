@@ -44,6 +44,20 @@ export function isToolGroup(item: ClineMessage | ClineMessage[]): item is ClineM
 	return Array.isArray(item) && (item as ClineMessage[] & { _isToolGroup?: boolean })._isToolGroup === true
 }
 
+/**
+ * A "summary" message is the turn-final output the agent produces for the user
+ * to review. These message types render with tinted backgrounds in ChatRow's
+ * switch-case renderer (yellow box for plan-mode, green box for act-mode).
+ */
+export function isSummaryMessage(msg: ClineMessage): boolean {
+	return (
+		msg.ask === "completion_result" ||
+		msg.say === "completion_result" ||
+		msg.say === "plan_completion_result" ||
+		msg.ask === "plan_mode_respond"
+	)
+}
+
 function isDuplicateAskOptionEcho(message: ClineMessage, previousMessage: ClineMessage | undefined): boolean {
 	if (
 		message.type !== "say" ||
