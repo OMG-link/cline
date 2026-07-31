@@ -532,4 +532,27 @@ describe("SdkInteractionCoordinator", () => {
 		expect(coordinator.resolvePendingToolApproval(undefined, "yesButtonClicked")).toBe(true)
 		await expect(approvalPromise).resolves.toEqual({ approved: true })
 	})
+
+	it("fires onAskQuestionPending after emitting the ask_question message", async () => {
+		const task = createTaskProxy("session-123", vi.fn(), vi.fn())
+		const onAskQuestionPending = vi.fn()
+		const coordinator = new SdkInteractionCoordinator({
+			messages: new SdkMessageCoordinator({ getTask: () => task }),
+			getSessionId: () => "session-123",
+			postStateToWebview: vi.fn().mockResolvedValue(undefined),
+			onAskQuestionPending,
+		})
+
+		const questionPromise = coordinator.handleAskQuestion("Which framework should we use?", ["React", "Vue"], undefined)
+		await vi.waitFor(() => expect(task.messageStateHandler.getClineMessages()).toHaveLength(1))
+
+		// The ask message is emitted before the notification callback fires.
+		const clineMessages = task.messageStateHandler.getClineMessages()
+		expect(clineMessages[0].type).toBe("ask")
+		expect(clineMessages[0].ask).toBe("followup")
+		expect(onAskQuestionPending).toHaveBeenCalledWith("Which framework should we use?", ["React", "Vue"])
+
+		expect(coordinator.resolvePendingAskQuestion("React")).toBe(true)
+		await expect(questionPromise).resolves.toBe("React")
+	})
 })

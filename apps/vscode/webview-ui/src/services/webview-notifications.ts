@@ -15,7 +15,7 @@
 interface ClineNotificationMessage {
 	type: "cline_notification"
 	notification: {
-		kind: "approval" | "completion" | "error"
+		kind: "approval" | "completion" | "error" | "question"
 		title: string
 		body: string
 	}
