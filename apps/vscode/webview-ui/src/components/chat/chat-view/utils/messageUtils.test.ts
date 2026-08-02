@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest"
 import {
 	canRestoreWorkspaceFromMessage,
 	filterVisibleMessages,
+	findCurrentTurnSummary,
 	groupLowStakesTools,
 	isSummaryMessage,
 	isToolGroup,
@@ -205,5 +206,64 @@ describe("isSummaryMessage", () => {
 
 	it("does not identify reasoning say as a summary", () => {
 		expect(isSummaryMessage({ type: "say", say: "reasoning", text: "thinking", ts: 1 })).toBe(false)
+	})
+})
+
+describe("findCurrentTurnSummary", () => {
+	const summary = (ts: number): ClineMessage => ({ type: "say", say: "completion_result", text: "Done", ts })
+	const apiReq = (ts: number): ClineMessage => ({ type: "say", say: "api_req_started", text: "{}", ts })
+	const text = (ts: number): ClineMessage => ({ type: "say", say: "text", text: "hello", ts })
+
+	it("scans the whole array when no boundary was recorded (unobserved turn)", () => {
+		// undefined boundary -> no early termination -> returns the last summary
+		expect(findCurrentTurnSummary([text(1), summary(5)], undefined)).toBe(1)
+	})
+
+	it("returns -1 when no summary exists and no boundary was recorded", () => {
+		expect(findCurrentTurnSummary([text(1), text(2)], undefined)).toBe(-1)
+	})
+
+	it("returns -1 for an empty array regardless of boundary", () => {
+		expect(findCurrentTurnSummary([], undefined)).toBe(-1)
+		expect(findCurrentTurnSummary([], 5)).toBe(-1)
+	})
+
+	it("breaks before matching a summary that sits exactly on the turn boundary", () => {
+		// The boundary (ts 2) is itself a completion_result left over from the previous
+		// turn, and this turn added nothing after it. The scan must stop AT the boundary
+		// (checked before the summary test), not match it as this turn's summary.
+		const messages = [summary(2), apiReq(3)]
+		expect(findCurrentTurnSummary(messages, 2)).toBe(-1)
+	})
+
+	it("finds a summary at the tail of the current turn", () => {
+		// boundary message is ts 1; this turn added 2 then a summary at 3
+		const messages = [text(1), text(2), summary(3)]
+		expect(findCurrentTurnSummary(messages, 1)).toBe(2)
+	})
+
+	it("skips a trailing bookkeeping message after the summary", () => {
+		// The done event can emit a trailing api_req_started after the summary.
+		const messages = [text(1), summary(3), apiReq(4)]
+		expect(findCurrentTurnSummary(messages, 1)).toBe(1)
+	})
+
+	it("does not match a summary from an earlier turn", () => {
+		// ts 1 is the boundary; an earlier turn's summary at ts 2 is out of window.
+		const messages = [summary(2), text(3), apiReq(4)]
+		expect(findCurrentTurnSummary(messages, 3)).toBe(-1)
+	})
+
+	it("returns -1 when the current turn produced no summary", () => {
+		const messages = [text(1), text(2), apiReq(3)]
+		expect(findCurrentTurnSummary(messages, 1)).toBe(-1)
+	})
+
+	it("scans unbounded when the boundary ts is absent from the array", () => {
+		// A stale boundary (e.g. left over from a previous task that MessagesArea did not
+		// remount for) behaves like undefined: the break never matches, so the whole array
+		// is scanned and the last summary is returned. Call sites that must not fire on a
+		// stale boundary guard on a preceding streaming phase instead of relying on this.
+		expect(findCurrentTurnSummary([text(1), summary(5)], 999)).toBe(1)
 	})
 })

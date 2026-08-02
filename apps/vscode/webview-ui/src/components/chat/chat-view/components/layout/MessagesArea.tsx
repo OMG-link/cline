@@ -1,4 +1,4 @@
-import type { ClineMessage } from "@shared/ExtensionMessage"
+import type { ClineMessage, TurnPhase } from "@shared/ExtensionMessage"
 import type React from "react"
 import { useCallback, useEffect, useMemo, useRef } from "react"
 import { Virtuoso } from "react-virtuoso"
@@ -9,7 +9,7 @@ import { cn } from "@/lib/utils"
 import { useThinkingLoaderRow } from "../../hooks/useThinkingLoaderRow"
 import type { ChatState, MessageHandlers, ScrollBehavior } from "../../types/chatTypes"
 import { isPendingResponseUnconfirmed } from "../../utils/pendingResponse"
-import { isSummaryMessage } from "../../utils/messageUtils"
+import { findCurrentTurnSummary } from "../../utils/messageUtils"
 import { createMessageRenderer } from "../messages/MessageRenderer"
 
 // Sentinel ts for the synthetic "Thinking..." placeholder row. Not a real message; ignored when
@@ -48,6 +48,14 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 }) => {
 	const { clineMessages, turnState } = useExtensionState()
 	const lastRawMessage = useMemo(() => clineMessages.at(-1), [clineMessages])
+
+	// Latest-ref so the streaming-phase transition effect can read the current tail
+	// without depending on clineMessages (which would re-run it on every append).
+	// This render-phase write is safe even under StrictMode: it is an idempotent
+	// mirror (each render overwrites with the latest array reference), unlike the
+	// transition-tracking refs below that mutate distinct values across renders.
+	const clineMessagesRef = useRef(clineMessages)
+	clineMessagesRef.current = clineMessages
 
 	const {
 		virtuosoRef,
@@ -151,68 +159,59 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 		}, 50)
 	}, [displayedGroupedMessages.length, lastTailTs, scrollToBottomSmooth, scrollToBottomAuto, disableAutoScrollRef])
 
-	// Re-engage auto scroll when a new turn starts streaming. In the old extension every turn start
-	// came from a webview action (send, approve, resume) whose handler reset disableAutoScrollRef;
-	// a turnState-driven start like plan -> act auto-continue has no webview-side action, so reset
-	// it here to keep the old "new turn pins to bottom" behavior.
-	const prevTurnPhaseRef = useRef(turnState?.phase)
+	// Re-engage auto scroll when a new turn starts streaming. A turnState-driven start like
+	// plan -> act auto-continue has no webview-side action to reset disableAutoScrollRef, so do
+	// it here to keep the "new turn pins to bottom" behavior.
+	// NOTE: prevPhaseForStreamingRef is this effect's own ref, not shared with the turn-end effect
+	// below. Sharing one ref would let whichever effect runs first overwrite ref.current before the
+	// other reads it (effects run in declaration order). Render-phase sharing is no better under
+	// StrictMode, so each effect owns its own ref and updates it in its body.
+	const prevPhaseForStreamingRef = useRef<TurnPhase | undefined>()
+	// Tail ts when streaming began — the turn boundary for findCurrentTurnSummary. Stays undefined
+	// for an unobserved turn (reload, opening history), which is harmless: the turn-end effect
+	// guards on a preceding streaming phase and never fires then.
+	const turnStartTailTsRef = useRef<number | undefined>(undefined)
 	useEffect(() => {
-		const prevPhase = prevTurnPhaseRef.current
-		prevTurnPhaseRef.current = turnState?.phase
+		const prevPhase = prevPhaseForStreamingRef.current
+		prevPhaseForStreamingRef.current = turnState?.phase
 		if (turnState?.phase === "streaming" && prevPhase !== "streaming") {
+			turnStartTailTsRef.current = clineMessagesRef.current.at(-1)?.ts
 			disableAutoScrollRef.current = false
 			scrollToBottomSmooth()
 		}
 	}, [turnState?.phase, scrollToBottomSmooth, disableAutoScrollRef])
 
-	// Scroll to the top of a turn-final summary message (plan_completion_result
-	// or completion_result) when the turn ends. Only fires if the user hasn't
-	// manually scrolled away from the bottom; if they scrolled up to read
-	// earlier content, their position is respected.
+	// Scroll to the top of the turn-final summary message when the turn ends. Only fires if the
+	// user hasn't manually scrolled away from the bottom.
+	const prevPhaseForSummaryRef = useRef<TurnPhase | undefined>()
 	const scrolledSummaryTsRef = useRef<number | null>(null)
 	useEffect(() => {
 		const phase = turnState?.phase
+		const prevPhase = prevPhaseForSummaryRef.current
+		prevPhaseForSummaryRef.current = phase
+		// Only fire on a real turn end (streaming -> completed/awaiting_followup). An unobserved
+		// turn (reload, opening history) lands here without a preceding streaming phase.
 		if (phase !== "completed" && phase !== "awaiting_followup") return
+		if (prevPhase !== "streaming") return
 
-		// Search backwards from the tail for a summary message. The done event
-		// may emit a trailing api_req_started after the completion_result, so the
-		// summary might not be the very last message. Limit the search to the
-		// last 3 messages to skip the trailing api_req_started while avoiding a
-		// match from an earlier turn.
-		const searchLimit = Math.max(0, clineMessages.length - 3)
-		let targetIndex = -1
-		for (let i = clineMessages.length - 1; i >= searchLimit; i--) {
-			if (isSummaryMessage(clineMessages[i])) {
-				targetIndex = i
-				break
-			}
-		}
-		// No target (e.g. switch_to_act_mode, or summary not yet available) -> skip
-		if (targetIndex === -1) return
+		// The summary message arrives before the phase flip (partial-message stream fires in
+		// appendAndEmit, before setTurnPhase + postStateToWebview), so clineMessages already
+		// contains it when this runs. Read from the latest-ref so this effect keys only on the
+		// phase transition, not on every message append.
+		const messages = clineMessagesRef.current
+		const targetIndex = findCurrentTurnSummary(messages, turnStartTailTsRef.current)
+		if (targetIndex === -1) return // e.g. switch_to_act_mode produced no summary
 
-		const target = clineMessages[targetIndex]
+		const target = messages[targetIndex]
+		if (scrolledSummaryTsRef.current === target.ts) return // already scrolled to this one
 
-		// Don't fire twice for the same summary message
-		if (scrolledSummaryTsRef.current === target.ts) return
+		if (disableAutoScrollRef.current) return // user scrolled up; respect their position
 
-		// Respect the user's scroll position: only auto-scroll if they haven't
-		// manually scrolled away from the bottom. disableAutoScrollRef is false
-		// when auto-scroll is engaged (user followed the streaming auto-scroll),
-		// true when the user scrolled up. Unlike isAtBottom (a Virtuoso state
-		// that flips to false momentarily when new content is appended),
-		// disableAutoScrollRef only changes on explicit user wheel-up or
-		// re-arrival at the bottom.
-		if (disableAutoScrollRef.current) return
-
-		// Suppress the bottom-pinning effect's 50ms settle timer so it does not
-		// fire after this scrollToMessage and yank the viewport back to the
-		// bottom. scrollToMessage also sets this internally, but setting it here
-		// blocks the settle timer before it is scheduled.
+		// Suppress the bottom-pinning effect's settle timer so it doesn't yank back to bottom.
 		disableAutoScrollRef.current = true
-
 		scrolledSummaryTsRef.current = target.ts
 		scrollToMessage(targetIndex)
-	}, [turnState?.phase, clineMessages, scrollToMessage, disableAutoScrollRef])
+	}, [turnState?.phase, scrollToMessage, disableAutoScrollRef])
 
 	const itemContent = useMemo(
 		() =>
