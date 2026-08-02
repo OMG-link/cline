@@ -58,6 +58,41 @@ export function isSummaryMessage(msg: ClineMessage): boolean {
 	)
 }
 
+/**
+ * Index of the current turn's summary message (completion_result /
+ * plan_completion_result / plan_mode_respond), or -1 if none exists.
+ *
+ * Searches backward from the tail. When turnStartTailTs is provided the scan
+ * stops at that message — the last one present when the turn started — so an
+ * earlier turn's summary is never matched. Each new message within a turn mints
+ * a fresh ts (in-place updates reuse the same ts), so a single ts reliably
+ * delimits the turn.
+ *
+ * When turnStartTailTs is undefined (unobserved turn — webview reload, opening
+ * a completed task from history) there is no early termination, so the whole
+ * array is scanned and the last summary is returned. This only matters at call
+ * sites that do not gate on a preceding streaming phase; MessagesArea's
+ * turn-end scroll guards on prevPhase === "streaming", so an unobserved
+ * turn never reaches this scan in practice.
+ */
+export function findCurrentTurnSummary(messages: ClineMessage[], turnStartTailTs: number | undefined): number {
+	for (let i = messages.length - 1; i >= 0; i--) {
+		const msg = messages[i]
+		// Stop the moment we cross from a message that joined this turn back into
+		// a message that was already present when the turn started. Checked before
+		// the summary test so a pre-turn summary never matches. When
+		// turnStartTailTs is undefined this never matches, so the scan runs
+		// unbounded (see doc comment).
+		if (msg.ts === turnStartTailTs) {
+			break
+		}
+		if (isSummaryMessage(msg)) {
+			return i
+		}
+	}
+	return -1
+}
+
 function isDuplicateAskOptionEcho(message: ClineMessage, previousMessage: ClineMessage | undefined): boolean {
 	if (
 		message.type !== "say" ||
