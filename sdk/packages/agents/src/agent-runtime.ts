@@ -1682,7 +1682,9 @@ export class AgentRuntime {
 			};
 		} else if (!prepared.tool) {
 			result = {
-				output: { error: `Unknown tool: ${prepared.toolCall.toolName}` },
+				output: {
+					error: `Unknown tool: ${prepared.toolCall.toolName}. The tool does not exist, or it is disabled in the current mode.`,
+				},
 				isError: true,
 			};
 		} else {
