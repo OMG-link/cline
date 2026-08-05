@@ -1,16 +1,17 @@
 import { ClineMessage } from "@shared/ExtensionMessage"
-import debounce from "debounce"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { useEvent } from "react-use"
-import { ListRange, VirtuosoHandle } from "react-virtuoso"
+import { VirtuosoHandle } from "react-virtuoso"
 import { ScrollBehavior } from "../types/chatTypes"
 
 // Height of the sticky user message header (padding + content)
 const STICKY_HEADER_HEIGHT = 32
+// Fixed lock after a cancel: blocks resume so an upward-gesture tail (trackpad
+// inertia, edge bounce) does not immediately re-enable following.
+const CANCEL_FOLLOW_LOCK_MS = 250
 
 /**
- * Custom hook for managing scroll behavior
- * Handles auto-scrolling, manual scrolling, and scroll-to-message functionality
+ * Custom hook for managing chat scroll behavior: input-driven following,
+ * scroll-to-message, and collapse/expand handling.
  */
 export function useScrollBehavior(
 	messages: ClineMessage[],
@@ -20,22 +21,30 @@ export function useScrollBehavior(
 	setExpandedRows: React.Dispatch<React.SetStateAction<Record<number, boolean>>>,
 ): ScrollBehavior & {
 	isAtBottom: boolean
-	setIsAtBottom: React.Dispatch<React.SetStateAction<boolean>>
 	pendingScrollToMessage: number | null
 	setPendingScrollToMessage: React.Dispatch<React.SetStateAction<number | null>>
 	scrolledPastUserMessage: ClineMessage | null
-	handleRangeChanged: (range: ListRange) => void
 } {
 	// Refs
 	const virtuosoRef = useRef<VirtuosoHandle>(null)
 	const scrollContainerRef = useRef<HTMLDivElement>(null)
-	const disableAutoScrollRef = useRef(false)
-	const layoutSettleScrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+	const enableAutoScrollRef = useRef(true)
 
 	// State
 	const [isAtBottom, setIsAtBottom] = useState(false)
 	const [pendingScrollToMessage, setPendingScrollToMessage] = useState<number | null>(null)
 	const [scrolledPastUserMessage, setScrolledPastUserMessage] = useState<ClineMessage | null>(null)
+	// The Virtuoso scroller element, captured via the scrollerRef prop. Its size
+	// is observed via ResizeObserver to drive bottom-following on panel resizes.
+	const [scrollerEl, setScrollerElState] = useState<HTMLElement | null>(null)
+	// Input-driven following (cancel-lock state machine). enableAutoScrollRef
+	// follows new content when true. cancelFollowUntilRef is a fixed window after
+	// a cancel that blocks resume. resumeCheckTimerRef retries resume after the
+	// lock, in case the atBottom edge fired during the lock.
+	const isAtBottomRef = useRef(false)
+	const cancelFollowUntilRef = useRef(0)
+	const resumeCheckTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+	const pendingPinRef = useRef(false)
 
 	// Find all user feedback messages
 	const userFeedbackMessages = useMemo(() => {
@@ -126,33 +135,65 @@ export function useScrollBehavior(
 		}
 	}, [checkScrolledPastUserMessage])
 
-	// Handler for when visible range changes in Virtuoso (kept for compatibility but not used for sticky)
-	const handleRangeChanged = useCallback((_range: ListRange) => {
-		// Range changed callback - we now use scroll position instead
-		// but keep this for potential future use
+	// Deduplicate: Virtuoso calls scrollerRef very frequently, often with the same
+	// element reference. Only update state when it actually changes.
+	const setScrollerEl = useCallback((el: HTMLElement | null) => {
+		setScrollerElState((prev) => (prev === el ? prev : el))
 	}, [])
-	const scrollToBottomSmooth = useMemo(
-		() =>
-			debounce(
-				() => {
-					virtuosoRef.current?.scrollTo({
-						top: Number.MAX_SAFE_INTEGER,
-						behavior: "smooth",
-					})
-				},
-				10,
-				{ immediate: true },
-			),
-		[],
-	)
 
-	// Smooth scroll to bottom with debounce
-	const scrollToBottomAuto = useCallback(() => {
-		virtuosoRef.current?.scrollTo({
-			top: Number.MAX_SAFE_INTEGER,
-			behavior: "auto", // instant causes crash
+	// Scroll to the bottom without touching following state, but only if
+	// following is currently on. Used by the streaming-follow paths
+	// (ResizeObserver, totalListHeightChanged) and InputSection's textarea-grow
+	// re-pin. rAF-throttled: streaming can fire totalListHeightChanged many times
+	// per frame; coalesce into one scrollTo.
+	const pinToBottom = useCallback(() => {
+		if (!enableAutoScrollRef.current) return
+		if (pendingPinRef.current) return
+		pendingPinRef.current = true
+		requestAnimationFrame(() => {
+			pendingPinRef.current = false
+			if (enableAutoScrollRef.current) {
+				virtuosoRef.current?.scrollTo({ top: Number.MAX_SAFE_INTEGER, behavior: "auto" })
+			}
 		})
 	}, [])
+
+	// Scroll to the bottom and re-enable following (clears the cancel lock).
+	// The "program/user wants to follow" entry point: turn start, send message,
+	// and the backstop effect on new message groups.
+	const scrollToBottom = useCallback((smooth = false) => {
+		enableAutoScrollRef.current = true
+		cancelFollowUntilRef.current = 0
+		if (resumeCheckTimerRef.current) {
+			clearTimeout(resumeCheckTimerRef.current)
+			resumeCheckTimerRef.current = null
+		}
+		virtuosoRef.current?.scrollTo({
+			top: Number.MAX_SAFE_INTEGER,
+			behavior: smooth ? "smooth" : "auto",
+		})
+	}, [])
+
+	// ResizeObserver: pins to bottom on viewport/panel resizes while following.
+	// Content-height changes are handled by totalListHeightChanged below.
+	useEffect(() => {
+		if (!scrollerEl || typeof ResizeObserver === "undefined") {
+			return
+		}
+		const onResize = () => {
+			pinToBottom()
+		}
+		const ro = new ResizeObserver(onResize)
+		ro.observe(scrollerEl)
+		onResize() // cover initial mount
+		return () => ro.disconnect()
+	}, [scrollerEl, pinToBottom])
+
+	// Virtuoso's content-height-changed callback. Fires on every item measurement
+	// change (including streaming text growth within the last row).
+	const handleTotalListHeightChanged = useCallback(() => {
+		pinToBottom()
+	}, [pinToBottom])
 
 	const scrollToMessage = useCallback(
 		(messageIndex: number) => {
@@ -190,7 +231,7 @@ export function useScrollBehavior(
 
 			if (groupIndex !== -1) {
 				setPendingScrollToMessage(null)
-				disableAutoScrollRef.current = true
+				enableAutoScrollRef.current = false
 
 				// Check if this is the first user feedback message (no sticky header would show when scrolling to it)
 				const isFirstUserMessage =
@@ -216,135 +257,138 @@ export function useScrollBehavior(
 	const toggleRowExpansion = useCallback(
 		(ts: number, options?: { preserveAutoScroll?: boolean }) => {
 			const isCollapsing = expandedRows[ts] ?? false
-			const lastGroup = groupedMessages.at(-1)
-			const isLast = Array.isArray(lastGroup) ? lastGroup[0].ts === ts : lastGroup?.ts === ts
-			const secondToLastGroup = groupedMessages.at(-2)
-			const isSecondToLast = Array.isArray(secondToLastGroup)
-				? secondToLastGroup[0].ts === ts
-				: secondToLastGroup?.ts === ts
-
-			const isLastCollapsedApiReq =
-				isLast &&
-				!Array.isArray(lastGroup) && // Make sure it's not a browser session group
-				lastGroup?.say === "api_req_started" &&
-				!expandedRows[lastGroup.ts]
 
 			setExpandedRows((prev) => ({
 				...prev,
 				[ts]: !prev[ts],
 			}))
 
-			// Disable auto-scroll when the user expands a row. Programmatic expansions
-			// for active command output should keep bottom pinning engaged.
+			// User-initiated expansion: following was already cancelled by the
+			// pointerdown that opened the row, so this is a belt-and-suspenders
+			// write. Programmatic expansions (preserveAutoScroll) keep following on.
 			if (!isCollapsing && !options?.preserveAutoScroll) {
-				disableAutoScrollRef.current = true
+				enableAutoScrollRef.current = false
 			}
-			// Only scroll on collapse, never on expand - expanding should stay in place
-			if (isCollapsing && isAtBottom) {
-				const timer = setTimeout(() => {
-					scrollToBottomAuto()
-				}, 0)
-				return () => clearTimeout(timer)
-			}
-			if (isCollapsing && (isLast || isSecondToLast)) {
-				if (isSecondToLast && !isLastCollapsedApiReq) {
-					return
-				}
-				const timer = setTimeout(() => {
-					scrollToBottomAuto()
-				}, 0)
-				return () => clearTimeout(timer)
-			}
-			// When expanding, don't scroll - let the element expand in place
+			// No re-pin on user-initiated collapse: a collapse is triggered by a
+			// click inside the scroller, whose pointerdown already cancelled following
+			// (enable=false), so any re-pin in this function would be gated off.
+			// Content height changes after the collapse re-trigger totalListHeightChanged,
+			// which pins if following is still on (e.g. a programmatic collapse with
+			// preserveAutoScroll).
 		},
-		[groupedMessages, expandedRows, scrollToBottomAuto, isAtBottom],
+		[expandedRows, setExpandedRows],
 	)
 
-	const clearLayoutSettleScrollTimers = useCallback(() => {
-		if (layoutSettleScrollTimerRef.current !== null) {
-			clearTimeout(layoutSettleScrollTimerRef.current)
-			layoutSettleScrollTimerRef.current = null
-		}
-	}, [])
-
-	const keepPinnedToBottomAfterLayout = useCallback(() => {
-		if (disableAutoScrollRef.current) {
-			return
-		}
-
-		if (layoutSettleScrollTimerRef.current !== null) {
-			clearTimeout(layoutSettleScrollTimerRef.current)
-		}
-		layoutSettleScrollTimerRef.current = setTimeout(() => {
-			if (!disableAutoScrollRef.current) {
-				scrollToBottomSmooth()
-			}
-			layoutSettleScrollTimerRef.current = null
-		}, 500)
-	}, [scrollToBottomSmooth])
-
-	const handleRowHeightChange = useCallback(
-		(_isTaller: boolean) => {
-			keepPinnedToBottomAfterLayout()
-		},
-		[keepPinnedToBottomAfterLayout],
-	)
-
-	const handleLastRowContentChange = useCallback(() => {
-		keepPinnedToBottomAfterLayout()
-	}, [keepPinnedToBottomAfterLayout])
-
-	useEffect(() => clearLayoutSettleScrollTimers, [clearLayoutSettleScrollTimers])
-
+	// Backstop: pins to bottom on new message groups while following is on,
+	// covering first mount and any case where the ResizeObserver hasn't attached
+	// yet.
 	useEffect(() => {
-		if (!disableAutoScrollRef.current) {
-			scrollToBottomSmooth()
-			setTimeout(() => {
-				if (!disableAutoScrollRef.current) {
-					scrollToBottomAuto()
-				}
-			}, 40)
-			setTimeout(() => {
-				if (!disableAutoScrollRef.current) {
-					scrollToBottomAuto()
-				}
-			}, 70)
-			// return () => clearTimeout(timer) // dont cleanup since if visibleMessages.length changes it cancels.
+		if (enableAutoScrollRef.current && groupedMessages.length > 0) {
+			scrollToBottom()
 		}
-	}, [groupedMessages.length, scrollToBottomSmooth, scrollToBottomAuto])
+	}, [groupedMessages.length, scrollToBottom])
 
 	useEffect(() => {
 		if (pendingScrollToMessage !== null) {
 			scrollToMessage(pendingScrollToMessage)
 		}
-	}, [pendingScrollToMessage, groupedMessages, scrollToMessage])
+	}, [pendingScrollToMessage, scrollToMessage])
 
-	const handleWheel = useCallback((event: Event) => {
-		const wheelEvent = event as WheelEvent
-		if (wheelEvent.deltaY && wheelEvent.deltaY < 0) {
-			if (scrollContainerRef.current?.contains(wheelEvent.target as Node)) {
-				// user scrolled up
-				disableAutoScrollRef.current = true
+	// Resumes following at the bottom once the cancel lock has elapsed.
+	const tryResumeFollow = useCallback(() => {
+		if (enableAutoScrollRef.current) return
+		if (!isAtBottomRef.current) return
+		if (performance.now() < cancelFollowUntilRef.current) return
+		enableAutoScrollRef.current = true
+		cancelFollowUntilRef.current = 0
+	}, [])
+
+	// Cancels following and arms the fixed cancel lock. Reused by the input
+	// listener and by turn-end's scroll-to-summary (both need to suppress the pin
+	// while a programmatic scroll runs).
+	const cancelFollowing = useCallback(() => {
+		if (!enableAutoScrollRef.current) return
+		enableAutoScrollRef.current = false
+		cancelFollowUntilRef.current = performance.now() + CANCEL_FOLLOW_LOCK_MS
+		if (resumeCheckTimerRef.current) clearTimeout(resumeCheckTimerRef.current)
+		resumeCheckTimerRef.current = setTimeout(() => {
+			resumeCheckTimerRef.current = null
+			tryResumeFollow()
+		}, CANCEL_FOLLOW_LOCK_MS)
+	}, [tryResumeFollow])
+
+	// Tracks whether the viewport is at the bottom and attempts resume when it
+	// returns there. Does NOT disable following when leaving the bottom — that
+	// was the root cause of the content-growth bug (Mermaid/code-block height
+	// jumps are indistinguishable from user scroll at the position level).
+	const handleAtBottomChange = useCallback(
+		(atBottom: boolean) => {
+			isAtBottomRef.current = atBottom
+			setIsAtBottom(atBottom)
+			if (atBottom) tryResumeFollow()
+		},
+		[tryResumeFollow],
+	)
+
+	// Input listener: cancels following on an upward gesture or any pointerdown.
+	// Downward wheel/keyboard gestures are no-ops (the user is moving toward the
+	// content they follow). Pointerdown is always treated as a cancel — any click
+	// on the scroll area may stop following. Touch is covered by pointerdown
+	// (touch fires pointerdown on all modern browsers), so no separate touch
+	// handlers.
+	useEffect(() => {
+		const el = scrollerEl
+		if (!el) return
+
+		const onWheel = (e: WheelEvent) => {
+			// deltaY < 0 = scroll up (toward older messages). Ctrl+wheel is zoom
+			// (pinch gesture), not scroll.
+			if (e.ctrlKey) return
+			if (e.deltaY < 0) cancelFollowing()
+		}
+		const onKeyDown = (e: KeyboardEvent) => {
+			if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return
+			if (e.key === "ArrowUp" || e.key === "PageUp" || e.key === "Home") cancelFollowing()
+		}
+		const onPointerDown = () => {
+			// Any click on the scroll area may stop following.
+			cancelFollowing()
+		}
+
+		el.addEventListener("wheel", onWheel, { passive: true })
+		el.addEventListener("keydown", onKeyDown)
+		el.addEventListener("pointerdown", onPointerDown)
+		return () => {
+			el.removeEventListener("wheel", onWheel)
+			el.removeEventListener("keydown", onKeyDown)
+			el.removeEventListener("pointerdown", onPointerDown)
+		}
+	}, [scrollerEl, cancelFollowing])
+
+	useEffect(() => {
+		return () => {
+			if (resumeCheckTimerRef.current) {
+				clearTimeout(resumeCheckTimerRef.current)
+				resumeCheckTimerRef.current = null
 			}
 		}
 	}, [])
-	useEvent("wheel", handleWheel, window, { passive: true }) // passive improves scrolling performance
 
 	return {
 		virtuosoRef,
 		scrollContainerRef,
-		disableAutoScrollRef,
-		scrollToBottomSmooth,
-		scrollToBottomAuto,
+		enableAutoScrollRef,
+		cancelFollowing,
+		pinToBottom,
+		scrollToBottom,
 		scrollToMessage,
 		toggleRowExpansion,
-		handleRowHeightChange,
-		handleLastRowContentChange,
 		isAtBottom,
-		setIsAtBottom,
 		pendingScrollToMessage,
 		setPendingScrollToMessage,
 		scrolledPastUserMessage,
-		handleRangeChanged,
+		setScrollerEl,
+		handleAtBottomChange,
+		handleTotalListHeightChanged,
 	}
 }

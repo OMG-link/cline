@@ -67,9 +67,6 @@ export function useMessageHandlers(messages: ClineMessage[], chatState: ChatStat
 				await SlashServiceClient.condense(StringRequest.create({ value: "compact" })).catch((err) =>
 					console.error("Failed to compact task:", err),
 				)
-				if ("disableAutoScrollRef" in chatState) {
-					;(chatState as any).disableAutoScrollRef.current = false
-				}
 				return
 			}
 
@@ -298,11 +295,6 @@ export function useMessageHandlers(messages: ClineMessage[], chatState: ChatStat
 				// New tasks clear optimistically before the RPC; the repeated success cleanup is idempotent.
 				if (messageSent) {
 					clearSentMessageState()
-
-					// Reset auto-scroll
-					if ("disableAutoScrollRef" in chatState) {
-						;(chatState as any).disableAutoScrollRef.current = false
-					}
 				}
 			}
 		},
@@ -488,10 +480,6 @@ export function useMessageHandlers(messages: ClineMessage[], chatState: ChatStat
 							break
 					}
 					break
-			}
-
-			if ("disableAutoScrollRef" in chatState) {
-				;(chatState as any).disableAutoScrollRef.current = false
 			}
 		},
 		[

@@ -16,8 +16,6 @@ interface MessageRendererProps {
 	modifiedMessages: ClineMessage[]
 	expandedRows: Record<number, boolean>
 	onToggleExpand: (ts: number, options?: { preserveAutoScroll?: boolean }) => void
-	onHeightChange: (isTaller: boolean) => void
-	onLastRowContentChange: () => void
 	onSetQuote: (quote: string | null) => void
 	inputValue: string
 	messageHandlers: MessageHandlers
@@ -35,8 +33,6 @@ const MessageRenderer: React.FC<MessageRendererProps> = ({
 	modifiedMessages,
 	expandedRows,
 	onToggleExpand,
-	onHeightChange,
-	onLastRowContentChange,
 	onSetQuote,
 	inputValue,
 	messageHandlers,
@@ -83,7 +79,6 @@ const MessageRenderer: React.FC<MessageRendererProps> = ({
 				key={messageOrGroup[0]?.ts}
 				lastModifiedMessage={modifiedMessages.at(-1)}
 				messages={messageOrGroup}
-				onHeightChange={onHeightChange}
 				onSetQuote={onSetQuote}
 				onToggleExpand={onToggleExpand}
 			/>
@@ -106,8 +101,6 @@ const MessageRenderer: React.FC<MessageRendererProps> = ({
 				message={messageOrGroup}
 				mode={mode}
 				onCancelCommand={() => messageHandlers.executeButtonAction("cancel")}
-				onHeightChange={onHeightChange}
-				onLastRowContentChange={onLastRowContentChange}
 				onSetQuote={onSetQuote}
 				onToggleExpand={onToggleExpand}
 				reasoningContent={reasoningData.reasoning}
@@ -127,8 +120,6 @@ export const createMessageRenderer = (
 	modifiedMessages: ClineMessage[],
 	expandedRows: Record<number, boolean>,
 	onToggleExpand: (ts: number, options?: { preserveAutoScroll?: boolean }) => void,
-	onHeightChange: (isTaller: boolean) => void,
-	onLastRowContentChange: () => void,
 	onSetQuote: (quote: string | null) => void,
 	inputValue: string,
 	messageHandlers: MessageHandlers,
@@ -144,8 +135,6 @@ export const createMessageRenderer = (
 			messageHandlers={messageHandlers}
 			messageOrGroup={messageOrGroup}
 			modifiedMessages={modifiedMessages}
-			onHeightChange={onHeightChange}
-			onLastRowContentChange={onLastRowContentChange}
 			onSetQuote={onSetQuote}
 			onToggleExpand={onToggleExpand}
 		/>

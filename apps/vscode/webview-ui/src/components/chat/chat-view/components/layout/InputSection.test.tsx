@@ -48,7 +48,7 @@ function makeChatState(overrides: Partial<ChatState> = {}): ChatState {
 function makeScrollBehavior(): ScrollBehavior {
 	return {
 		isAtBottom: true,
-		scrollToBottomAuto: vi.fn(),
+		pinToBottom: vi.fn(),
 	} as unknown as ScrollBehavior
 }
 

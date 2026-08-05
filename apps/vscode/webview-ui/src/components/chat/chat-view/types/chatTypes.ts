@@ -3,7 +3,7 @@
  */
 
 import { ClineAsk, ClineMessage } from "@shared/ExtensionMessage"
-import { ListRange, VirtuosoHandle } from "react-virtuoso"
+import { VirtuosoHandle } from "react-virtuoso"
 import { ButtonActionType } from "../shared/buttonConfig"
 
 export interface PendingUserMessage {
@@ -85,19 +85,28 @@ export interface MessageHandlers {
 export interface ScrollBehavior {
 	virtuosoRef: React.RefObject<VirtuosoHandle>
 	scrollContainerRef: React.RefObject<HTMLDivElement>
-	disableAutoScrollRef: React.MutableRefObject<boolean>
-	scrollToBottomSmooth: () => void
-	scrollToBottomAuto: () => void
+	// Whether the viewport should follow new content. Kept "AutoScroll" in the
+	// name to match the existing preserveAutoScroll option; "following" and
+	// "auto-scroll" mean the same here.
+	enableAutoScrollRef: React.MutableRefObject<boolean>
+	// Cancels following and arms the fixed cancel-follow lock.
+	cancelFollowing: () => void
+	// Re-enables following (clears the cancel lock) and scrolls to the bottom.
+	scrollToBottom: (smooth?: boolean) => void
+	// Enable-gated scroll to the bottom; does not change following.
+	pinToBottom: () => void
 	scrollToMessage: (messageIndex: number) => void
 	toggleRowExpansion: (ts: number, options?: { preserveAutoScroll?: boolean }) => void
-	handleRowHeightChange: (isTaller: boolean) => void
-	handleLastRowContentChange: () => void
 	isAtBottom: boolean
-	setIsAtBottom: React.Dispatch<React.SetStateAction<boolean>>
 	pendingScrollToMessage: number | null
 	setPendingScrollToMessage: React.Dispatch<React.SetStateAction<number | null>>
 	scrolledPastUserMessage: ClineMessage | null
-	handleRangeChanged: (range: ListRange) => void
+	// The Virtuoso scroller element setter, captured via the scrollerRef prop.
+	setScrollerEl: (el: HTMLElement | null) => void
+	// Handler for Virtuoso's atBottomStateChange prop.
+	handleAtBottomChange: (atBottom: boolean) => void
+	// Handler for Virtuoso's totalListHeightChanged prop (streaming follow).
+	handleTotalListHeightChanged: () => void
 }
 
 /**

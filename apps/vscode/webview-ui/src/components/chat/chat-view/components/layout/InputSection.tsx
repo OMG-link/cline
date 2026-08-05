@@ -40,7 +40,7 @@ export const InputSection: React.FC<InputSectionProps> = ({
 		lastMessage,
 	} = chatState
 
-	const { isAtBottom, scrollToBottomAuto } = scrollBehavior
+	const { isAtBottom, pinToBottom } = scrollBehavior
 	const { turnState } = useExtensionState()
 	const legacyTaskRunning =
 		turnState === undefined &&
@@ -66,7 +66,7 @@ export const InputSection: React.FC<InputSectionProps> = ({
 				onFocusChange={handleFocusChange}
 				onHeightChange={() => {
 					if (isAtBottom) {
-						scrollToBottomAuto()
+						pinToBottom()
 					}
 				}}
 				onSelectFilesAndImages={selectFilesAndImages}

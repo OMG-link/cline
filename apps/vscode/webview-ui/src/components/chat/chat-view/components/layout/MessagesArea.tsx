@@ -12,8 +12,7 @@ import { isPendingResponseUnconfirmed } from "../../utils/pendingResponse"
 import { findCurrentTurnSummary } from "../../utils/messageUtils"
 import { createMessageRenderer } from "../messages/MessageRenderer"
 
-// Sentinel ts for the synthetic "Thinking..." placeholder row. Not a real message; ignored when
-// deriving scroll triggers from the tail of the rendered list.
+// Sentinel ts for the synthetic "Thinking..." placeholder row. Not a real message.
 const WAITING_ROW_TS = Number.MIN_SAFE_INTEGER
 
 // Synthetic placeholder rendered while waiting for the model with no visible rows streaming.
@@ -61,15 +60,14 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 		virtuosoRef,
 		scrollContainerRef,
 		toggleRowExpansion,
-		handleRowHeightChange,
-		setIsAtBottom,
-		disableAutoScrollRef,
-		handleRangeChanged,
+		enableAutoScrollRef,
+		cancelFollowing,
 		scrolledPastUserMessage,
 		scrollToMessage,
-		scrollToBottomSmooth,
-		scrollToBottomAuto,
-		handleLastRowContentChange,
+		scrollToBottom,
+		setScrollerEl,
+		handleAtBottomChange,
+		handleTotalListHeightChanged,
 	} = scrollBehavior
 
 	// Find the index of the scrolled past user message for scrolling
@@ -128,40 +126,9 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 		return [...groupedMessages, WAITING_ROW]
 	}, [groupedMessages, showThinkingLoaderRow, showEmptyListLoader])
 
-	// useScrollBehavior auto-scrolls when groupedMessages.length changes, but rows can change here
-	// without that: the waiting row is turnState-driven (e.g. plan -> act auto-continue adds no
-	// message), new tool messages merge into the trailing tool group at constant length, and the
-	// waiting row gets swapped for a real reasoning row. Pin to bottom for those too, keyed on the
-	// rendered list's length and the tail message's ts (stable across partial updates, so this
-	// doesn't fire while a message streams; row growth is handled by ChatRow's height observer).
-	const lastTailTs = useMemo(() => {
-		for (let i = displayedGroupedMessages.length - 1; i >= 0; i--) {
-			const row = displayedGroupedMessages[i]
-			const message = Array.isArray(row) ? row.at(-1) : row
-			if (message && message.ts !== WAITING_ROW_TS) {
-				return message.ts
-			}
-		}
-		return undefined
-	}, [displayedGroupedMessages])
-
-	useEffect(() => {
-		if (disableAutoScrollRef.current) {
-			return
-		}
-		scrollToBottomSmooth()
-		// Settle with an instant scroll so late layout shifts can't leave us short of the bottom.
-		// No cleanup: a quick follow-up change would cancel the settle scroll.
-		setTimeout(() => {
-			if (!disableAutoScrollRef.current) {
-				scrollToBottomAuto()
-			}
-		}, 50)
-	}, [displayedGroupedMessages.length, lastTailTs, scrollToBottomSmooth, scrollToBottomAuto, disableAutoScrollRef])
-
-	// Re-engage auto scroll when a new turn starts streaming. A turnState-driven start like
-	// plan -> act auto-continue has no webview-side action to reset disableAutoScrollRef, so do
-	// it here to keep the "new turn pins to bottom" behavior.
+	// Re-engage following when a new turn starts streaming. A turnState-driven start like
+	// plan -> act auto-continue has no webview-side action to re-enable following, so do
+	// it here (via scrollToBottom, which re-enables following and scrolls to bottom).
 	// NOTE: prevPhaseForStreamingRef is this effect's own ref, not shared with the turn-end effect
 	// below. Sharing one ref would let whichever effect runs first overwrite ref.current before the
 	// other reads it (effects run in declaration order). Render-phase sharing is no better under
@@ -176,13 +143,12 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 		prevPhaseForStreamingRef.current = turnState?.phase
 		if (turnState?.phase === "streaming" && prevPhase !== "streaming") {
 			turnStartTailTsRef.current = clineMessagesRef.current.at(-1)?.ts
-			disableAutoScrollRef.current = false
-			scrollToBottomSmooth()
+			scrollToBottom(true)
 		}
-	}, [turnState?.phase, scrollToBottomSmooth, disableAutoScrollRef])
+	}, [turnState?.phase, scrollToBottom])
 
 	// Scroll to the top of the turn-final summary message when the turn ends. Only fires if the
-	// user hasn't manually scrolled away from the bottom.
+	// user hasn't cancelled following.
 	const prevPhaseForSummaryRef = useRef<TurnPhase | undefined>()
 	const scrolledSummaryTsRef = useRef<number | null>(null)
 	useEffect(() => {
@@ -205,13 +171,15 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 		const target = messages[targetIndex]
 		if (scrolledSummaryTsRef.current === target.ts) return // already scrolled to this one
 
-		if (disableAutoScrollRef.current) return // user scrolled up; respect their position
+		if (!enableAutoScrollRef.current) return // user scrolled up; respect their position
 
-		// Suppress the bottom-pinning effect's settle timer so it doesn't yank back to bottom.
-		disableAutoScrollRef.current = true
+		// Suppress the pin while scrolling to the summary, so it can't fight the
+		// navigation. cancelFollowing arms the fixed cancel lock, which also blocks
+		// tryResumeFollow from re-enabling during the scroll.
+		cancelFollowing()
 		scrolledSummaryTsRef.current = target.ts
 		scrollToMessage(targetIndex)
-	}, [turnState?.phase, scrollToMessage, disableAutoScrollRef])
+	}, [turnState?.phase, enableAutoScrollRef, cancelFollowing, scrollToMessage])
 
 	const itemContent = useMemo(
 		() =>
@@ -220,8 +188,6 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 				modifiedMessages,
 				expandedRows,
 				toggleRowExpansion,
-				handleRowHeightChange,
-				handleLastRowContentChange,
 				setActiveQuote,
 				inputValue,
 				messageHandlers,
@@ -232,8 +198,6 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 			modifiedMessages,
 			expandedRows,
 			toggleRowExpansion,
-			handleRowHeightChange,
-			handleLastRowContentChange,
 			setActiveQuote,
 			inputValue,
 			messageHandlers,
@@ -287,12 +251,7 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 					</div>
 				)}
 				<Virtuoso
-					atBottomStateChange={(isAtBottom) => {
-						setIsAtBottom(isAtBottom)
-						if (isAtBottom) {
-							disableAutoScrollRef.current = false
-						}
-					}}
+					atBottomStateChange={handleAtBottomChange}
 					atBottomThreshold={10} // trick to make sure virtuoso re-renders when task changes, and we use initialTopMostItemIndex to start at the bottom
 					className="scrollable grow overflow-y-scroll"
 					components={virtuosoComponents}
@@ -305,13 +264,14 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 					initialTopMostItemIndex={displayedGroupedMessages.length - 1} // messages is the raw format returned by extension, modifiedMessages is the manipulated structure that combines certain messages of related type, and visibleMessages is the filtered structure that removes messages that should not be rendered
 					itemContent={itemContent}
 					key={task.ts}
-					rangeChanged={handleRangeChanged}
-					ref={virtuosoRef} // anything lower causes issues with followOutput
+					ref={virtuosoRef}
+					scrollerRef={(ref) => setScrollerEl(ref instanceof HTMLElement ? ref : null)}
 					style={{
 						scrollbarWidth: "none", // Firefox
 						msOverflowStyle: "none", // IE/Edge
 						overflowAnchor: "none", // prevent scroll jump when content expands
 					}}
+					totalListHeightChanged={handleTotalListHeightChanged}
 				/>
 			</div>
 		</div>

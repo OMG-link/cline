@@ -4,7 +4,7 @@ import { StringRequest } from "@shared/proto/cline/common"
 import { VSCodeButton } from "@vscode/webview-ui-toolkit/react"
 import deepEqual from "fast-deep-equal"
 import { ChevronDownIcon, ChevronRightIcon } from "lucide-react"
-import React, { CSSProperties, memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
+import React, { CSSProperties, memo, useCallback, useEffect, useMemo, useState } from "react"
 import { useSize } from "react-use"
 import styled from "styled-components"
 import { BrowserSettingsMenu } from "@/components/browser/BrowserSettingsMenu"
@@ -20,7 +20,6 @@ interface BrowserSessionRowProps {
 	onToggleExpand: (messageTs: number) => void
 	lastModifiedMessage?: ClineMessage
 	isLast: boolean
-	onHeightChange: (isTaller: boolean) => void
 	onSetQuote: (text: string) => void
 }
 
@@ -63,6 +62,7 @@ const noScreenshotIconStyle: CSSProperties = {
 }
 const consoleLogsContainerStyle: CSSProperties = { width: "100%" }
 const consoleLogsTextStyle: CSSProperties = { fontSize: "0.8em" }
+const browserSessionRowStyle: CSSProperties = { marginBottom: -10 }
 const paginationContainerStyle: CSSProperties = {
 	display: "flex",
 	justifyContent: "space-between",
@@ -105,9 +105,8 @@ const headerStyle: CSSProperties = {
 }
 
 const BrowserSessionRow = memo((props: BrowserSessionRowProps) => {
-	const { messages, isLast, onHeightChange, lastModifiedMessage, onSetQuote } = props
+	const { messages, isLast, lastModifiedMessage, onSetQuote } = props
 	const { browserSettings } = useExtensionState()
-	const prevHeightRef = useRef(0)
 	const [maxActionHeight, setMaxActionHeight] = useState(0)
 	const [consoleLogsExpanded, setConsoleLogsExpanded] = useState(false)
 
@@ -348,10 +347,8 @@ const BrowserSessionRow = memo((props: BrowserSessionRowProps) => {
 	// Calculate maxWidth
 	const maxWidth = browserSettings.viewport.width < BROWSER_VIEWPORT_PRESETS["Small Desktop (900x600)"].width ? 200 : undefined
 
-	const [browserSessionRow, { height }] = useSize(
-		// We don't declare a constant for the inline style here because `useSize` will try to modify the style object
-		// Which will cause `Uncaught TypeError: Cannot assign to read only property 'position' of object '#<Object>'`
-		<BrowserSessionRowContainer style={{ marginBottom: -10 }}>
+	const browserSessionRow = (
+		<BrowserSessionRowContainer style={browserSessionRowStyle}>
 			<div style={browserSessionRowContainerInnerStyle}>
 				{isBrowsing && !isLastMessageResume ? (
 					<ProgressIndicator />
@@ -472,24 +469,13 @@ const BrowserSessionRow = memo((props: BrowserSessionRowProps) => {
 			)}
 
 			{/* {shouldShowCheckpoints && <CheckpointOverlay messageTs={lastCheckpointMessageTs} />} */}
-		</BrowserSessionRowContainer>,
+		</BrowserSessionRowContainer>
 	)
-
-	// Height change effect
-	useEffect(() => {
-		const isInitialRender = prevHeightRef.current === 0
-		if (isLast && height !== 0 && height !== Infinity && height !== prevHeightRef.current) {
-			if (!isInitialRender) {
-				onHeightChange(height > prevHeightRef.current)
-			}
-			prevHeightRef.current = height
-		}
-	}, [height, isLast, onHeightChange])
 
 	return browserSessionRow
 }, deepEqual)
 
-interface BrowserSessionRowContentProps extends Omit<BrowserSessionRowProps, "messages" | "onHeightChange"> {
+interface BrowserSessionRowContentProps extends Omit<BrowserSessionRowProps, "messages"> {
 	message: ClineMessage
 	setMaxActionHeight: (height: number) => void
 	onSetQuote: (text: string) => void
