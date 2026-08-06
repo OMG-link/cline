@@ -159,18 +159,13 @@ function historyItemToTaskResponse(item: HistoryItem): TaskResponse {
 }
 
 /**
- * Turn-end notification handler. Suppresses the completion notification while
- * a mode switch (plan → act) is pending so the user is not alerted for a turn
- * that will be auto-continued by the mode rebuild.
+ * Turn-end notification handler. Fires a completion notification when a turn
+ * ends, signaling the agent needs the user's attention.
  */
 export function handleTurnEnded(
 	phase: "completed" | "awaiting_followup",
-	hasPendingModeChange: boolean,
 	notify: (req: NotificationRequest) => void,
 ): void {
-	if (hasPendingModeChange) {
-		return
-	}
 	notify({
 		kind: "completion",
 		message: phase === "completed" ? "Task completed." : "Cline is waiting for you.",
@@ -687,7 +682,7 @@ export class Controller {
 			captureProviderApiError: (event) => this.captureProviderFailure(event),
 			beginProviderFailureTelemetryTurn: () => this.beginProviderFailureTelemetryTurn(),
 			onTurnEnded: (phase) =>
-				handleTurnEnded(phase, this.mode.hasPendingModeChange(), (req) => this.notificationService.notify(req)),
+				handleTurnEnded(phase, (req) => this.notificationService.notify(req)),
 			onApiError: () => {
 				this.notificationService.notify({
 					kind: "error",

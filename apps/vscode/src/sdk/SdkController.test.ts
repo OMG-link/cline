@@ -23,15 +23,9 @@ describe("resolveWorkspaceRootPath", () => {
 })
 
 describe("handleTurnEnded", () => {
-	it("suppresses the notification when a mode change is pending", () => {
+	it("fires a completion notification for the completed phase", () => {
 		const notify = vi.fn()
-		handleTurnEnded("awaiting_followup", true, notify)
-		expect(notify).not.toHaveBeenCalled()
-	})
-
-	it("fires a completion notification when no mode change is pending", () => {
-		const notify = vi.fn()
-		handleTurnEnded("completed", false, notify)
+		handleTurnEnded("completed", notify)
 		expect(notify).toHaveBeenCalledWith({
 			kind: "completion",
 			message: "Task completed.",
@@ -40,7 +34,7 @@ describe("handleTurnEnded", () => {
 
 	it("uses the waiting-for-you message for awaiting_followup phase", () => {
 		const notify = vi.fn()
-		handleTurnEnded("awaiting_followup", false, notify)
+		handleTurnEnded("awaiting_followup", notify)
 		expect(notify).toHaveBeenCalledWith({
 			kind: "completion",
 			message: "Cline is waiting for you.",
