@@ -63,10 +63,6 @@ export interface ChatState {
 	handleFocusChange: (isFocused: boolean) => void
 	clearExpandedRows: () => void
 	resetState: () => void
-
-	// Scroll-related state (will be moved to scroll hook)
-	isAtBottom?: boolean
-	pendingScrollToMessage?: number | null
 }
 
 /**
@@ -85,15 +81,16 @@ export interface MessageHandlers {
 export interface ScrollBehavior {
 	virtuosoRef: React.RefObject<VirtuosoHandle>
 	scrollContainerRef: React.RefObject<HTMLDivElement>
-	// Whether the viewport should follow new content. Kept "AutoScroll" in the
-	// name to match the existing preserveAutoScroll option; "following" and
-	// "auto-scroll" mean the same here.
-	enableAutoScrollRef: React.MutableRefObject<boolean>
+	// Whether the viewport is actively following new content (UI binding).
+	isFollowing: boolean
+	// Imperative read of following state for async callbacks (rAF, setTimeout,
+	// event listeners) where a state snapshot would be stale.
+	getFollowing: () => boolean
 	// Cancels following and arms the fixed cancel-follow lock.
 	cancelFollowing: () => void
 	// Re-enables following (clears the cancel lock) and scrolls to the bottom.
 	scrollToBottom: (smooth?: boolean) => void
-	// Enable-gated scroll to the bottom; does not change following.
+	// Following-gated scroll to the bottom; does not change following.
 	pinToBottom: () => void
 	scrollToMessage: (messageIndex: number) => void
 	toggleRowExpansion: (ts: number, options?: { preserveAutoScroll?: boolean }) => void

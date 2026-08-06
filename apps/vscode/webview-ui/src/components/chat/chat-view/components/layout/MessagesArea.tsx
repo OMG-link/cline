@@ -8,9 +8,10 @@ import { useExtensionState } from "@/context/ExtensionStateContext"
 import { cn } from "@/lib/utils"
 import { useThinkingLoaderRow } from "../../hooks/useThinkingLoaderRow"
 import type { ChatState, MessageHandlers, ScrollBehavior } from "../../types/chatTypes"
-import { isPendingResponseUnconfirmed } from "../../utils/pendingResponse"
 import { findCurrentTurnSummary } from "../../utils/messageUtils"
+import { isPendingResponseUnconfirmed } from "../../utils/pendingResponse"
 import { createMessageRenderer } from "../messages/MessageRenderer"
+import { ScrollToBottomButton } from "./ScrollToBottomButton"
 
 // Sentinel ts for the synthetic "Thinking..." placeholder row. Not a real message.
 const WAITING_ROW_TS = Number.MIN_SAFE_INTEGER
@@ -60,7 +61,9 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 		virtuosoRef,
 		scrollContainerRef,
 		toggleRowExpansion,
-		enableAutoScrollRef,
+		isFollowing,
+		getFollowing,
+		isAtBottom,
 		cancelFollowing,
 		scrolledPastUserMessage,
 		scrollToMessage,
@@ -84,6 +87,8 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 			scrollToMessage(scrolledPastUserMessageIndex)
 		}
 	}, [scrollToMessage, scrolledPastUserMessageIndex])
+
+	const handleScrollToBottom = useCallback(() => scrollToBottom(true), [scrollToBottom])
 
 	const { expandedRows, inputValue, setActiveQuote } = chatState
 	const lastVisibleRow = useMemo(() => groupedMessages.at(-1), [groupedMessages])
@@ -171,7 +176,7 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 		const target = messages[targetIndex]
 		if (scrolledSummaryTsRef.current === target.ts) return // already scrolled to this one
 
-		if (!enableAutoScrollRef.current) return // user scrolled up; respect their position
+		if (!getFollowing()) return // user scrolled up; respect their position
 
 		// Suppress the pin while scrolling to the summary, so it can't fight the
 		// navigation. cancelFollowing arms the fixed cancel lock, which also blocks
@@ -179,7 +184,7 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 		cancelFollowing()
 		scrolledSummaryTsRef.current = target.ts
 		scrollToMessage(targetIndex)
-	}, [turnState?.phase, enableAutoScrollRef, cancelFollowing, scrollToMessage])
+	}, [turnState?.phase, getFollowing, cancelFollowing, scrollToMessage])
 
 	const itemContent = useMemo(
 		() =>
@@ -272,6 +277,7 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 					totalListHeightChanged={handleTotalListHeightChanged}
 				/>
 			</div>
+			{!isFollowing && !isAtBottom && <ScrollToBottomButton onClick={handleScrollToBottom} />}
 		</div>
 	)
 }

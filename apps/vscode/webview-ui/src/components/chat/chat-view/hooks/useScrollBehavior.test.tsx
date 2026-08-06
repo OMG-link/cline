@@ -49,10 +49,16 @@ describe("useScrollBehavior", () => {
 				disconnect() {}
 			},
 		)
+		// Fake timers: prevents cancelFollowing's setTimeout from leaking across
+		// tests. performance.now() is faked so advanceTimersByTime drives lock
+		// deadlines.
+		vi.useFakeTimers()
 	})
 
 	afterEach(() => {
 		vi.unstubAllGlobals()
+		vi.clearAllTimers()
+		vi.useRealTimers()
 	})
 
 	function fireResize() {
@@ -62,20 +68,20 @@ describe("useScrollBehavior", () => {
 	}
 
 	// pinToBottom is rAF-throttled; flush one frame so the scrollTo runs.
-	async function flushRaf() {
-		await act(async () => {
-			await new Promise((resolve) => requestAnimationFrame(resolve))
+	function flushRaf() {
+		act(() => {
+			vi.advanceTimersByTime(16)
 		})
 	}
 
-	it("pins to bottom on resize when following is enabled", async () => {
+	it("pins to bottom on resize when following is enabled", () => {
 		const { result } = renderHook(() => useScrollBehavior([], [], [], {}, vi.fn()))
 		const scrollTo = vi.fn()
 		;(result.current.virtuosoRef as MutableRefObject<{ scrollTo: typeof scrollTo } | null>).current = {
 			scrollTo,
 		}
 
-		// enableAutoScroll defaults to true (following enabled).
+		// isFollowing defaults to true (following enabled).
 		const scroller = makeScroller({ scrollHeight: 500, clientHeight: 100, scrollTop: 400 })
 		act(() => {
 			result.current.setScrollerEl(scroller)
@@ -83,12 +89,12 @@ describe("useScrollBehavior", () => {
 
 		scrollTo.mockClear()
 		fireResize()
-		await flushRaf()
+		flushRaf()
 
 		expect(scrollTo).toHaveBeenCalledWith(expect.objectContaining({ top: Number.MAX_SAFE_INTEGER, behavior: "auto" }))
 	})
 
-	it("does not pin when following is off (enableAutoScroll=false)", () => {
+	it("does not pin when following is off (isFollowing=false)", () => {
 		const { result } = renderHook(() => useScrollBehavior([], [], [], {}, vi.fn()))
 		const scrollTo = vi.fn()
 		;(result.current.virtuosoRef as MutableRefObject<{ scrollTo: typeof scrollTo } | null>).current = {
@@ -100,9 +106,9 @@ describe("useScrollBehavior", () => {
 			result.current.setScrollerEl(scroller)
 		})
 
-		// Turn following off directly (as an upward gesture would).
+		// Turn following off (as an upward gesture would).
 		act(() => {
-			result.current.enableAutoScrollRef.current = false
+			result.current.cancelFollowing()
 		})
 
 		scrollTo.mockClear()
@@ -118,7 +124,7 @@ describe("useScrollBehavior", () => {
 			result.current.toggleRowExpansion(commandMessage.ts)
 		})
 
-		expect(result.current.enableAutoScrollRef.current).toBe(false)
+		expect(result.current.getFollowing()).toBe(false)
 	})
 
 	it("keeps following enabled when command output expands programmatically", () => {
@@ -128,11 +134,11 @@ describe("useScrollBehavior", () => {
 			result.current.toggleRowExpansion(commandMessage.ts, { preserveAutoScroll: true })
 		})
 
-		expect(result.current.enableAutoScrollRef.current).toBe(true)
+		expect(result.current.getFollowing()).toBe(true)
 	})
 
 	describe("handleTotalListHeightChanged", () => {
-		it("calls scrollTo when following is enabled", async () => {
+		it("calls scrollTo when following is enabled", () => {
 			const { result } = renderHook(() => useScrollBehavior([], [], [], {}, vi.fn()))
 			const scrollTo = vi.fn()
 			;(result.current.virtuosoRef as MutableRefObject<{ scrollTo: typeof scrollTo } | null>).current = {
@@ -147,12 +153,12 @@ describe("useScrollBehavior", () => {
 			act(() => {
 				result.current.handleTotalListHeightChanged()
 			})
-			await flushRaf()
+			flushRaf()
 
 			expect(scrollTo).toHaveBeenCalledWith(expect.objectContaining({ top: Number.MAX_SAFE_INTEGER, behavior: "auto" }))
 		})
 
-		it("does not call scrollTo when enableAutoScroll is false", () => {
+		it("does not call scrollTo when following is off", () => {
 			const { result } = renderHook(() => useScrollBehavior([], [], [], {}, vi.fn()))
 			const scrollTo = vi.fn()
 			;(result.current.virtuosoRef as MutableRefObject<{ scrollTo: typeof scrollTo } | null>).current = {
@@ -165,7 +171,7 @@ describe("useScrollBehavior", () => {
 
 			// Disable AFTER setup so earlier effects don't override it.
 			act(() => {
-				result.current.enableAutoScrollRef.current = false
+				result.current.cancelFollowing()
 			})
 			scrollTo.mockClear()
 			act(() => {
@@ -177,16 +183,20 @@ describe("useScrollBehavior", () => {
 	})
 
 	describe("position-driven resume (handleAtBottomChange)", () => {
-		it("resumes following when handleAtBottomChange(true) with no recent input", () => {
+		it("resumes following after cancel lock elapses", () => {
 			const { result } = renderHook(() => useScrollBehavior([], [], [], {}, vi.fn()))
 			act(() => {
-				result.current.enableAutoScrollRef.current = false
+				result.current.cancelFollowing()
+			})
+			// Advance past the cancel lock so tryResumeFollow is not blocked.
+			act(() => {
+				vi.advanceTimersByTime(251)
 			})
 
 			act(() => {
 				result.current.handleAtBottomChange(true)
 			})
-			expect(result.current.enableAutoScrollRef.current).toBe(true)
+			expect(result.current.getFollowing()).toBe(true)
 		})
 
 		// Leaving the bottom must NOT disable following — that was the root cause of
@@ -199,48 +209,63 @@ describe("useScrollBehavior", () => {
 				result.current.handleAtBottomChange(false)
 			})
 
-			expect(result.current.enableAutoScrollRef.current).toBe(true)
+			expect(result.current.getFollowing()).toBe(true)
+		})
+		it("resumes following with no cancel lock (e.g. after row expansion)", () => {
+			const { result } = renderHook(() => useScrollBehavior([], [], [], {}, vi.fn()))
+			// toggleRowExpansion sets following=false without arming the cancel lock
+			act(() => {
+				result.current.toggleRowExpansion(123)
+			})
+			expect(result.current.getFollowing()).toBe(false)
+
+			act(() => {
+				result.current.handleAtBottomChange(true)
+			})
+			expect(result.current.getFollowing()).toBe(true)
+		})
+		it("scrollToBottom re-engages following after cancel", () => {
+			const { result } = renderHook(() => useScrollBehavior([], [], [], {}, vi.fn()))
+			act(() => {
+				result.current.cancelFollowing()
+			})
+			expect(result.current.getFollowing()).toBe(false)
+
+			act(() => {
+				result.current.scrollToBottom()
+			})
+			expect(result.current.getFollowing()).toBe(true)
 		})
 	})
 
 	describe("input-driven following (cancel-lock state machine)", () => {
-		beforeEach(() => {
-			// performance.now() is part of the default faked set in vitest 3 and
-			// advances with advanceTimersByTime, so the lock deadlines can be driven
-			// deterministically.
-			vi.useFakeTimers()
-		})
-		afterEach(() => {
-			vi.useRealTimers()
-		})
-
 		it("cancels following on upward wheel / up-arrow / pointerdown", () => {
 			const { result } = renderHook(() => useScrollBehavior([], [], [], {}, vi.fn()))
 			const scroller = makeScroller({ scrollHeight: 1000, clientHeight: 100, scrollTop: 900 })
 			act(() => {
 				result.current.setScrollerEl(scroller)
 			})
-			expect(result.current.enableAutoScrollRef.current).toBe(true)
+			expect(result.current.getFollowing()).toBe(true)
 
 			// Upward wheel (deltaY < 0) cancels.
 			act(() => {
 				scroller.dispatchEvent(new WheelEvent("wheel", { deltaY: -100 }))
 			})
-			expect(result.current.enableAutoScrollRef.current).toBe(false)
+			expect(result.current.getFollowing()).toBe(false)
 
 			// Re-enable, then ArrowUp cancels.
 			act(() => {
-				result.current.enableAutoScrollRef.current = true
+				result.current.scrollToBottom()
 				scroller.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp" }))
 			})
-			expect(result.current.enableAutoScrollRef.current).toBe(false)
+			expect(result.current.getFollowing()).toBe(false)
 
 			// Re-enable, then pointerdown cancels (treated as upward intent).
 			act(() => {
-				result.current.enableAutoScrollRef.current = true
+				result.current.scrollToBottom()
 				scroller.dispatchEvent(new Event("pointerdown"))
 			})
-			expect(result.current.enableAutoScrollRef.current).toBe(false)
+			expect(result.current.getFollowing()).toBe(false)
 		})
 
 		it("does not cancel on downward wheel / down-arrow / PageDown", () => {
@@ -249,14 +274,14 @@ describe("useScrollBehavior", () => {
 			act(() => {
 				result.current.setScrollerEl(scroller)
 			})
-			expect(result.current.enableAutoScrollRef.current).toBe(true)
+			expect(result.current.getFollowing()).toBe(true)
 
 			act(() => {
 				scroller.dispatchEvent(new WheelEvent("wheel", { deltaY: 100 }))
 				scroller.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown" }))
 				scroller.dispatchEvent(new KeyboardEvent("keydown", { key: "PageDown" }))
 			})
-			expect(result.current.enableAutoScrollRef.current).toBe(true)
+			expect(result.current.getFollowing()).toBe(true)
 		})
 
 		it("recovers following after pointerdown cancels, once the cancel lock elapses at the bottom", () => {
@@ -269,19 +294,19 @@ describe("useScrollBehavior", () => {
 			act(() => {
 				scroller.dispatchEvent(new Event("pointerdown"))
 			})
-			expect(result.current.enableAutoScrollRef.current).toBe(false)
+			expect(result.current.getFollowing()).toBe(false)
 
 			// Still at the bottom; resume is blocked while the lock is active.
 			act(() => {
 				result.current.handleAtBottomChange(true)
 			})
-			expect(result.current.enableAutoScrollRef.current).toBe(false)
+			expect(result.current.getFollowing()).toBe(false)
 
 			// Once the lock elapses, the pending resume re-check fires.
 			act(() => {
 				vi.advanceTimersByTime(251)
 			})
-			expect(result.current.enableAutoScrollRef.current).toBe(true)
+			expect(result.current.getFollowing()).toBe(true)
 		})
 
 		it("resumes following after the fixed cancel lock elapses, once the user is at the bottom", () => {
@@ -295,19 +320,19 @@ describe("useScrollBehavior", () => {
 			act(() => {
 				scroller.dispatchEvent(new WheelEvent("wheel", { deltaY: -100 }))
 			})
-			expect(result.current.enableAutoScrollRef.current).toBe(false)
+			expect(result.current.getFollowing()).toBe(false)
 
 			// User reaches the bottom; resume is blocked by the cancel lock.
 			act(() => {
 				result.current.handleAtBottomChange(true)
 			})
-			expect(result.current.enableAutoScrollRef.current).toBe(false)
+			expect(result.current.getFollowing()).toBe(false)
 
 			// After the cancel lock elapses, the pending resume re-check fires.
 			act(() => {
 				vi.advanceTimersByTime(251)
 			})
-			expect(result.current.enableAutoScrollRef.current).toBe(true)
+			expect(result.current.getFollowing()).toBe(true)
 		})
 
 		it("does not reset the cancel-follow lock on inputs during the lock (regression: mid-stream resume)", () => {
@@ -320,7 +345,7 @@ describe("useScrollBehavior", () => {
 			act(() => {
 				scroller.dispatchEvent(new WheelEvent("wheel", { deltaY: -100 }))
 			})
-			expect(result.current.enableAutoScrollRef.current).toBe(false)
+			expect(result.current.getFollowing()).toBe(false)
 
 			// Upward inputs during the lock window must NOT re-arm it (the lock is
 			// fixed; cancelFollowing early-returns once already cancelled).
@@ -338,14 +363,14 @@ describe("useScrollBehavior", () => {
 			act(() => {
 				result.current.handleAtBottomChange(true)
 			})
-			expect(result.current.enableAutoScrollRef.current).toBe(false)
+			expect(result.current.getFollowing()).toBe(false)
 
 			// Advance past the REMAINING original lock window (~50ms left) — NOT a
 			// fresh 250ms. If the lock had been reset, this would still be blocked.
 			act(() => {
 				vi.advanceTimersByTime(60)
 			})
-			expect(result.current.enableAutoScrollRef.current).toBe(true)
+			expect(result.current.getFollowing()).toBe(true)
 		})
 
 		it("does not resume if the user is not at the bottom after the cancel lock elapses", () => {
@@ -361,7 +386,7 @@ describe("useScrollBehavior", () => {
 			act(() => {
 				vi.advanceTimersByTime(251)
 			})
-			expect(result.current.enableAutoScrollRef.current).toBe(false)
+			expect(result.current.getFollowing()).toBe(false)
 		})
 	})
 })

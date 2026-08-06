@@ -339,11 +339,11 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
 
 	// Use scroll behavior hook
 	const scrollBehavior = useScrollBehavior(displayMessages, visibleMessages, groupedMessages, expandedRows, setExpandedRows)
-	const { scrollToBottom, pinToBottom, enableAutoScrollRef } = scrollBehavior
+	const { scrollToBottom, pinToBottom, getFollowing } = scrollBehavior
 
 	// When a prompt gets queued, the queue banner mounts (or grows) in the footer, which
 	// shrinks the messages area and visually covers the bottom of the conversation. No new
-	// chat row is added, so the list-length-based auto-scroll never fires — re-pin to the
+	// chat row is added, so the list-length-based following never fires — re-pin to the
 	// bottom here so the latest content stays visible.
 	const queuedPromptCount = queuedPrompts?.length ?? 0
 	const taskTs = task?.ts
@@ -363,11 +363,11 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
 		scrollToBottom(true)
 		// Settle with an instant scroll once the footer's layout change has landed.
 		setTimeout(() => {
-			if (enableAutoScrollRef.current) {
+			if (getFollowing()) {
 				pinToBottom()
 			}
 		}, 50)
-	}, [queuedPromptCount, taskTs, scrollToBottom, pinToBottom, enableAutoScrollRef])
+	}, [queuedPromptCount, taskTs, scrollToBottom, pinToBottom, getFollowing])
 
 	const placeholderText = useMemo(() => {
 		const text = task ? "Type a message..." : "Type your task here..."
