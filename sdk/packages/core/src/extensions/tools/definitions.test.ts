@@ -510,6 +510,20 @@ describe("run_commands tool description", () => {
 		expect(onUnix).toContain("grep/head/tail");
 	});
 
+	it("states that array entries run in parallel and how to sequence them", () => {
+		const ps = buildRunCommandsDescription("powershell", true);
+		expect(ps).toContain("run in parallel");
+		expect(ps).toContain("combine them into one string with ';'");
+
+		const cmd = buildRunCommandsDescription("cmd", true);
+		expect(cmd).toContain("run in parallel");
+		expect(cmd).toContain("combine them into one string with '&&'");
+
+		const posix = buildRunCommandsDescription("posix", false);
+		expect(posix).toContain("run in parallel");
+		expect(posix).toContain("combine them into one string with '&&' or ';'");
+	});
+
 	it("derives the createShellTool description from config.shell", () => {
 		const posixTool = createShellTool(async () => "ok", {
 			shell: "/bin/bash",
