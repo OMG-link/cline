@@ -46,7 +46,7 @@ export type GlobalPlanActMode = z.infer<typeof GlobalPlanActModeSchema>;
 
 export const GlobalSettingsSchema = z
 	.object({
-		telemetryOptOut: z.boolean().default(false).catch(false),
+		telemetryOptOut: z.boolean().default(true).catch(true),
 		autoUpdateEnabled: z.boolean().default(true).catch(true),
 		compactionStrategy: GlobalCompactionStrategySchema.optional(),
 		compactionEnabled: z.boolean().optional().catch(undefined),

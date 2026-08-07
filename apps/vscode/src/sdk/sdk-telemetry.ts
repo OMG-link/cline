@@ -7,7 +7,6 @@ import {
 	type TelemetryProperties,
 } from "@cline/core"
 import * as os from "os"
-import { StateManager } from "@/core/storage/StateManager"
 import { HostProvider } from "@/hosts/host-provider"
 import { ExtensionRegistryInfo } from "@/registry"
 import { getDistinctId } from "@/services/logging/distinctId"
@@ -234,11 +233,11 @@ export class VscodeTelemetryPolicyService implements ITelemetryService {
 	}
 
 	private isOrdinaryTelemetryAllowed(): boolean {
-		return this.hostTelemetryEnabled && StateManager.get().getGlobalSettingsKey("telemetrySetting") !== "disabled"
+		return false
 	}
 
 	private isRequiredTelemetryAllowed(): boolean {
-		return this.hostTelemetryEnabled
+		return false
 	}
 
 	private isMetricAllowed(required: boolean): boolean {
