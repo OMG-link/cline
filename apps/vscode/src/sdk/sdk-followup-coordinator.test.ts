@@ -302,6 +302,28 @@ describe("SdkFollowupCoordinator", () => {
 		expect(options.postStateToWebview).toHaveBeenCalledOnce()
 	})
 
+	it("does not send the original task text as instructions on an empty resume", async () => {
+		const task = makeTask("task-1")
+		const historyItem = {
+			id: "task-1",
+			ts: 1,
+			task: "Original task",
+			tokensIn: 0,
+			tokensOut: 0,
+			totalCost: 0,
+			cwdOnTaskInitialization: "/task-cwd",
+		}
+		const { coordinator, options } = makeCoordinator({ task, historyItem })
+
+		// Empty resume (no prompt, no images, no files) — mimics clicking Resume button
+		await coordinator.askResponse(undefined, undefined, undefined, "yesButtonClicked", "resumable")
+
+		const sentPrompt = options.sessions.fireAndForgetSend.mock.calls[0][2]
+		expect(sentPrompt).toContain("[TASK RESUMPTION]")
+		expect(sentPrompt).not.toContain("Original task")
+		expect(sentPrompt).not.toContain("New instructions from the user")
+	})
+
 	it("ends a resumed session without mutating a task selected while start was pending", async () => {
 		const task = makeTask("task-1")
 		const replacementTask = makeTask("task-2")

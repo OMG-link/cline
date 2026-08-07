@@ -226,9 +226,7 @@ export class SdkFollowupCoordinator {
 
 			const effectivePrompt =
 				prompt?.trim() ||
-				(historyItem
-					? `[TASK RESUMPTION] This task was interrupted. It may or may not be complete, so please reassess the task context. The conversation history has been preserved. New instructions from the user: ${historyItem.task}`
-					: "[TASK RESUMPTION] Please continue where you left off.")
+				"[TASK RESUMPTION] This task was interrupted. It may or may not be complete, so please reassess the task context. The conversation history has been preserved."
 			const resolvedPrompt = await this.options.resolveContextMentions(effectivePrompt)
 			if (this.options.getTask()?.taskId !== taskId) {
 				await this.endStartedResume(sdkHost, startResult.sessionId)
