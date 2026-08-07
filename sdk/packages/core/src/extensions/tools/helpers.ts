@@ -5,6 +5,7 @@ import {
 	type ReadFileRequest,
 	RunCommandsInputUnionSchema,
 	type StructuredCommandInput,
+	TimeoutMsValidationSchema,
 } from "./schemas";
 
 /**
@@ -136,32 +137,44 @@ export function coalesceOrphanReadRanges(input: unknown): unknown {
 
 export function normalizeRunCommandsInput(
 	input: unknown,
-): Array<string | StructuredCommandInput> {
+): {
+	commands: Array<string | StructuredCommandInput>;
+	timeoutMs?: number;
+} {
+	// Extract and validate timeoutMs independently before union validation.
+	// TimeoutMsValidationSchema wraps the field in an object so Zod errors
+	// include the path "-> at timeoutMs" for any input format.
+	// null is treated as undefined (field absent), not as 0.
+	let timeoutMs: number | undefined;
+	if (input !== null && typeof input === "object" && !Array.isArray(input)) {
+		const candidate = (input as Record<string, unknown>).timeoutMs;
+		if (candidate !== undefined && candidate !== null) {
+			const validated = validateWithZod(TimeoutMsValidationSchema, { timeoutMs: candidate });
+			timeoutMs = validated.timeoutMs;
+		}
+	}
+
+	// Union validation: command format only (unchanged 9-member schema).
 	const validate = validateWithZod(RunCommandsInputUnionSchema, input);
 
+	let commands: Array<string | StructuredCommandInput>;
 	if (typeof validate === "string") {
-		return [validate];
-	}
-
-	if (Array.isArray(validate)) {
-		return validate;
-	}
-
-	if ("commands" in validate) {
-		return Array.isArray(validate.commands)
+		commands = [validate];
+	} else if (Array.isArray(validate)) {
+		commands = validate;
+	} else if ("commands" in validate) {
+		commands = Array.isArray(validate.commands)
 			? validate.commands
 			: [validate.commands];
+	} else if ("command" in validate) {
+		commands = "args" in validate ? [validate] : [validate.command];
+	} else if ("cmd" in validate) {
+		commands = [validate.cmd];
+	} else {
+		commands = [validate];
 	}
 
-	if ("command" in validate) {
-		return "args" in validate ? [validate] : [validate.command];
-	}
-
-	if ("cmd" in validate) {
-		return [validate.cmd];
-	}
-
-	return [validate];
+	return { commands, timeoutMs };
 }
 
 export function formatRunCommandQuery(

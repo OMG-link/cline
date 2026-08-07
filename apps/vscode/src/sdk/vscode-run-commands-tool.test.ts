@@ -546,6 +546,52 @@ describe("executeForeground — Proceed While Running", () => {
 		fs.rmSync(logFilePath!, { force: true })
 	})
 
+	it("uses agent-requested autoProceedMs instead of the default 300 seconds", async () => {
+		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] })
+		const coordinator = new SdkForegroundCommandCoordinator()
+		const { process, emitLine, complete } = createControllableTerminalProcess()
+		const resultPromise = executeForeground(
+			"devserver",
+			"/workspace",
+			createFakeTerminalManager(process),
+			100_000,
+			undefined,
+			coordinator,
+			undefined,
+			10_000,
+		)
+
+		await new Promise<void>((resolve) => setImmediate(resolve))
+		emitLine("listening on :3000")
+
+		let settled = false
+		void resultPromise.then(() => {
+			settled = true
+		})
+		await vi.advanceTimersByTimeAsync(9_999)
+		expect(settled).toBe(false)
+
+		await vi.advanceTimersByTimeAsync(1)
+		const result = await resultPromise
+		expect(result).toContain("automatically proceeded")
+		expect(result).toContain("after 10 seconds")
+		expect(result).not.toContain("after 300 seconds")
+		expect(coordinator.isRunning).toBe(false)
+
+		const logFilePath = /redirected to this file[^:]*: (.+)$/m.exec(result)?.[1]?.trim()
+		expect(logFilePath).toBeTruthy()
+		vi.useRealTimers()
+		complete({ exitCode: 0 })
+		await waitFor(() => {
+			try {
+				return fs.readFileSync(logFilePath!, "utf8").includes("[Command completed with exit code 0]")
+			} catch {
+				return false
+			}
+		})
+		fs.rmSync(logFilePath!, { force: true })
+	})
+
 	it("detach returns the partial output with the log file path, and later output lands in the log", async () => {
 		const coordinator = new SdkForegroundCommandCoordinator()
 		const { process, emitLine, complete } = createControllableTerminalProcess()

@@ -330,7 +330,8 @@ export function createShellExecutor(
 		options.maxOutputBytes ??
 		MAX_COMMAND_OUTPUT_CHARS;
 
-	return (command, cwd, context) => {
+	return (command, cwd, context, callTimeoutMs) => {
+		const effectiveTimeoutMs = callTimeoutMs ?? timeoutMs;
 		const isStructured = typeof command !== "string";
 		const invocation = isStructured
 			? { args: command.args ?? [] }
@@ -344,7 +345,7 @@ export function createShellExecutor(
 				input: invocation.input,
 			},
 			context,
-			timeoutMs,
+			effectiveTimeoutMs,
 			maxOutputChars,
 			combineOutput,
 		);

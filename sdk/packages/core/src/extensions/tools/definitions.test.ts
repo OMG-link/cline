@@ -596,6 +596,7 @@ describe("default run_commands tool", () => {
 				conversationId: "conv-1",
 				iteration: 1,
 			}),
+			undefined,
 		);
 	});
 
@@ -622,12 +623,14 @@ describe("default run_commands tool", () => {
 			"pwd",
 			process.cwd(),
 			expect.objectContaining({ iteration: 1 }),
+			undefined,
 		);
 		expect(execute).toHaveBeenNthCalledWith(
 			2,
 			"git status --short",
 			process.cwd(),
 			expect.objectContaining({ iteration: 2 }),
+			undefined,
 		);
 	});
 
@@ -672,6 +675,7 @@ describe("default run_commands tool", () => {
 				conversationId: "conv-1",
 				iteration: 1,
 			}),
+			undefined,
 		);
 	});
 
@@ -708,12 +712,14 @@ describe("default run_commands tool", () => {
 			"pwd",
 			process.cwd(),
 			expect.objectContaining({ iteration: 1 }),
+			undefined,
 		);
 		expect(execute).toHaveBeenNthCalledWith(
 			2,
 			{ command: "node", args: ["--version"] },
 			process.cwd(),
 			expect.objectContaining({ iteration: 1 }),
+			undefined,
 		);
 	});
 
@@ -764,6 +770,7 @@ describe("default run_commands tool", () => {
 				conversationId: "conv-1",
 				iteration: 1,
 			}),
+			undefined,
 		);
 	});
 
@@ -851,6 +858,7 @@ describe("default run_commands tool", () => {
 			expectedCommand,
 			process.cwd(),
 			expect.objectContaining({ sessionId: "session-split-heredoc" }),
+			undefined,
 		);
 		expect(result).toEqual([
 			expect.objectContaining({
@@ -893,18 +901,21 @@ describe("default run_commands tool", () => {
 			"pwd",
 			process.cwd(),
 			expect.objectContaining({ sessionId: "session-surrounding-heredoc" }),
+			undefined,
 		);
 		expect(execute).toHaveBeenNthCalledWith(
 			2,
 			expectedCommand,
 			process.cwd(),
 			expect.objectContaining({ sessionId: "session-surrounding-heredoc" }),
+			undefined,
 		);
 		expect(execute).toHaveBeenNthCalledWith(
 			3,
 			"ls /app",
 			process.cwd(),
 			expect.objectContaining({ sessionId: "session-surrounding-heredoc" }),
+			undefined,
 		);
 		expect(result).toEqual([
 			expect.objectContaining({ query: "pwd", result: "ran:pwd" }),
@@ -943,6 +954,7 @@ describe("default run_commands tool", () => {
 			expect.objectContaining({
 				sessionId: "session-tab-stripping-heredoc",
 			}),
+			undefined,
 		);
 		expect(result).toEqual([
 			expect.objectContaining({
@@ -1010,12 +1022,14 @@ describe("default run_commands tool", () => {
 			expectedFirstCommand,
 			process.cwd(),
 			expect.objectContaining({ sessionId: "session-consecutive-heredocs" }),
+			undefined,
 		);
 		expect(execute).toHaveBeenNthCalledWith(
 			2,
 			expectedSecondCommand,
 			process.cwd(),
 			expect.objectContaining({ sessionId: "session-consecutive-heredocs" }),
+			undefined,
 		);
 		expect(result).toEqual([
 			expect.objectContaining({
@@ -1112,6 +1126,7 @@ describe("default run_commands tool", () => {
 			command,
 			process.cwd(),
 			expect.anything(),
+			undefined,
 		);
 		expect(result[0].success).toBe(true);
 		expect(result[0].result).toBe(`ran:${command.length}`);
@@ -1174,7 +1189,8 @@ describe("default run_commands tool", () => {
 		const telemetry = createTelemetryStub();
 		const tool = createShellTool(execute, { bashTimeoutMs: 5, telemetry });
 
-		const result = await tool.execute(
+		vi.useFakeTimers();
+		const resultPromise = tool.execute(
 			{
 				commands: [
 					{
@@ -1197,6 +1213,9 @@ describe("default run_commands tool", () => {
 				},
 			},
 		);
+		await vi.advanceTimersByTimeAsync(5010);
+		const result = await resultPromise;
+		vi.useRealTimers();
 
 		expect(result).toEqual([
 			expect.objectContaining({ success: false }),
@@ -1275,7 +1294,8 @@ describe("default run_commands tool", () => {
 		const execute = vi.fn((): Promise<string> => new Promise<string>(() => {}));
 		const tool = createShellTool(execute, { bashTimeoutMs: 5, telemetry });
 
-		const result = await tool.execute(
+		vi.useFakeTimers();
+		const resultPromise = tool.execute(
 			{ commands: ["echo secret-token", "pwd"] },
 			{
 				sessionId: "session-1",
@@ -1290,6 +1310,9 @@ describe("default run_commands tool", () => {
 				},
 			},
 		);
+		await vi.advanceTimersByTimeAsync(5010);
+		const result = await resultPromise;
+		vi.useRealTimers();
 
 		expect(result).toEqual([
 			expect.objectContaining({ success: false }),
@@ -1334,6 +1357,124 @@ describe("default run_commands tool", () => {
 		});
 
 		expect(capturedTimeoutEvents(telemetry)).toEqual([]);
+	});
+
+	it("passes agent-requested timeoutMs to the executor", async () => {
+		const execute = vi.fn(async () => "ok");
+		const tool = createShellTool(execute);
+		await tool.execute(
+			{ commands: ["echo hi"], timeoutMs: 60000 } as never,
+			{ agentId: "a", conversationId: "c", iteration: 1 },
+		);
+		expect(execute).toHaveBeenCalledWith(
+			"echo hi",
+			expect.any(String),
+			expect.objectContaining({ agentId: "a" }),
+			60000,
+		);
+	});
+
+	it("does not pass timeoutMs to executor when omitted", async () => {
+		const execute = vi.fn(async () => "ok");
+		const tool = createShellTool(execute);
+		await tool.execute(
+			{ commands: ["echo hi"] } as never,
+			{ agentId: "a", conversationId: "c", iteration: 1 },
+		);
+		expect(execute).toHaveBeenCalledWith(
+			"echo hi",
+			expect.any(String),
+			expect.objectContaining({ agentId: "a" }),
+			undefined,
+		);
+	});
+
+	it("rejects timeoutMs exceeding max", async () => {
+		const execute = vi.fn(async () => "ok");
+		const tool = createShellTool(execute);
+		await expect(
+			tool.execute(
+				{ commands: ["echo hi"], timeoutMs: 3600001 } as never,
+				{ agentId: "a", conversationId: "c", iteration: 1 },
+			),
+		).rejects.toThrow();
+	});
+
+	it("rejects timeoutMs below min", async () => {
+		const execute = vi.fn(async () => "ok");
+		const tool = createShellTool(execute);
+		await expect(
+			tool.execute(
+				{ commands: ["echo hi"], timeoutMs: 999 } as never,
+				{ agentId: "a", conversationId: "c", iteration: 1 },
+			),
+		).rejects.toThrow();
+	});
+
+	it("rejects string timeoutMs", async () => {
+		const execute = vi.fn(async () => "ok");
+		const tool = createShellTool(execute);
+		await expect(
+			tool.execute(
+				{ commands: ["echo hi"], timeoutMs: "5000" } as never,
+				{ agentId: "a", conversationId: "c", iteration: 1 },
+			),
+		).rejects.toThrow(/timeoutMs/);
+	});
+
+	it("treats null timeoutMs as undefined", async () => {
+		const execute = vi.fn(async () => "ok");
+		const tool = createShellTool(execute);
+		await tool.execute(
+			{ commands: ["echo hi"], timeoutMs: null } as never,
+			{ agentId: "a", conversationId: "c", iteration: 1 },
+		);
+		expect(execute).toHaveBeenCalledWith(
+			"echo hi",
+			expect.any(String),
+			expect.objectContaining({ agentId: "a" }),
+			undefined,
+		);
+	});
+
+	it("captures agent_requested timeout source in telemetry", async () => {
+		vi.useFakeTimers();
+		const execute = vi.fn((): Promise<string> => new Promise<string>(() => {}));
+		const telemetry = createTelemetryStub();
+		const tool = createShellTool(execute, { telemetry });
+		const resultPromise = tool.execute(
+			{ commands: ["echo hi"], timeoutMs: 5000 } as never,
+			{ agentId: "a", conversationId: "c", iteration: 1, toolCallId: "t1" },
+		);
+		await vi.advanceTimersByTimeAsync(10010);
+		await resultPromise;
+		vi.useRealTimers();
+		const timeoutCalls = capturedTimeoutEvents(telemetry);
+		expect(timeoutCalls).toHaveLength(1);
+		expect(timeoutCalls[0]?.properties).toMatchObject({
+			tool_name: "run_commands",
+			effective_timeout_ms: 5000,
+			timeout_source: "agent_requested",
+		});
+	});
+
+	it("includes timeoutMs in the generated JSON schema", () => {
+		const execute = vi.fn(async () => "ok");
+		const tool = createShellTool(execute);
+		const schema = tool.inputSchema as Record<string, unknown>;
+		const properties = schema.properties as Record<string, unknown>;
+		expect(properties).toHaveProperty("timeoutMs");
+	});
+
+	it("throws timeoutMs error with field name for non-primary format", async () => {
+		const execute = vi.fn(async () => "ok");
+		const tool = createShellTool(execute);
+		await expect(
+			tool.execute(
+				{ command: "git", timeoutMs: -1 } as never,
+				{ agentId: "a", conversationId: "c", iteration: 1 },
+			),
+		).rejects.toThrow(/timeoutMs/);
 	});
 });
 

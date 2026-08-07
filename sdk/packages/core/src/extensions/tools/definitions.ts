@@ -90,7 +90,7 @@ function captureRunCommandsTimeoutFromContext(
 	context: AgentToolContext,
 	properties: {
 		effectiveTimeoutMs: number;
-		timeoutSource: "default_setting" | "configured_setting";
+		timeoutSource: "default_setting" | "configured_setting" | "agent_requested";
 		commandCount: number;
 		durationMs: number;
 	},
@@ -177,18 +177,22 @@ function coalesceAdjacentStringHeredocs(
 	return coalesced;
 }
 
+/** Grace period added to the outer withTimeout to avoid racing the executor's internal timer. */
+const SHELL_TIMEOUT_GRACE_PERIOD_MS = 5000;
+
 async function executeShellCommands(
 	commands: Array<string | StructuredCommandInput>,
 	options: {
 		executor: ShellExecutor;
 		cwd: string;
 		context: AgentToolContext;
-		timeoutMs: number;
-		timeoutSource: "default_setting" | "configured_setting";
+		requestedTimeoutMs?: number;
+		effectiveTimeoutMs: number;
+		timeoutSource: "default_setting" | "configured_setting" | "agent_requested";
 		telemetry?: ITelemetryService;
 	},
 ): Promise<ToolOperationResult[]> {
-	const { executor, cwd, context, timeoutMs, timeoutSource, telemetry } =
+	const { executor, cwd, context, requestedTimeoutMs, effectiveTimeoutMs, timeoutSource, telemetry } =
 		options;
 
 	return Promise.all(
@@ -197,9 +201,9 @@ async function executeShellCommands(
 			const query = formatRunCommandQueryPreview(command);
 			try {
 				const output = await withTimeout(
-					executor(command, cwd, context),
-					timeoutMs,
-					`Command timed out after ${timeoutMs}ms`,
+					executor(command, cwd, context, requestedTimeoutMs),
+					effectiveTimeoutMs + SHELL_TIMEOUT_GRACE_PERIOD_MS,
+					`Command timed out after ${effectiveTimeoutMs}ms`,
 				);
 				return {
 					query,
@@ -209,7 +213,7 @@ async function executeShellCommands(
 			} catch (error) {
 				if (error instanceof TimeoutError) {
 					captureRunCommandsTimeoutFromContext(telemetry, context, {
-						effectiveTimeoutMs: error.timeoutMs,
+						effectiveTimeoutMs,
 						timeoutSource,
 						commandCount: commands.length,
 						durationMs: Date.now() - startedAt,
@@ -419,7 +423,8 @@ export function buildRunCommandsDescription(
 			RUN_COMMANDS_SHARED_INSTRUCTIONS +
 			`Output beyond ~${Math.round(MAX_COMMAND_OUTPUT_CHARS / 1000)}k characters is middle-truncated (start and end preserved); filter output when you need specific sections. ` +
 			`Commands run through ${shellName}; quote paths and arguments for ${shellName} and use ${sequencingOperator} to sequence commands. ` +
-			"Include multiple commands in the same call when they are independent and safe to run concurrently. When independent reads, searches, or edits are also needed, call those tools in the same response."
+			"Include multiple commands in the same call when they are independent and safe to run concurrently. When independent reads, searches, or edits are also needed, call those tools in the same response. " +
+			"Pass `timeoutMs` to set a per-call timeout."
 		);
 	}
 
@@ -435,7 +440,8 @@ export function buildRunCommandsDescription(
 		environmentNote +
 		"Commands should be properly shell-escaped and targeted to avoid error or timeout. Include multiple commands in the same call when they are independent complete shell commands and safe to run concurrently; multiline scripts and heredocs must be a single command string. When independent reads, searches, or edits are also needed, call those tools in the same response. " +
 		`Output beyond ~${Math.round(MAX_COMMAND_OUTPUT_CHARS / 1000)}k characters is middle-truncated (start and end preserved); pipe through grep/head/tail when you need specific sections of large output. ` +
-		"For long-running commands, run them in background and redirect output to a tmp file that you can read from later."
+		"For long-running commands, run them in background and redirect output to a tmp file that you can read from later. " +
+			"Pass `timeoutMs` to set a per-call timeout."
 	);
 }
 
@@ -453,6 +459,11 @@ export function buildRunCommandsDescription(
  * generating does not affect the request in flight, and the next request
  * names the new shell. The provider must return the shell the executor will
  * use for tool calls issued by that next request.
+ *
+ * Per-call timeoutMs has different semantics depending on execution mode:
+ * - Background (child_process): the process is killed when the timeout expires.
+ * - Foreground (VS Code terminal): the task auto-proceeds (detaches) when the
+ *   timeout expires; the command continues running in the terminal.
  */
 export function createShellTool(
 	executor: ShellExecutor,
@@ -479,20 +490,27 @@ export function createShellTool(
 		name: "run_commands",
 		description: describe(),
 		inputSchema: zodToJsonSchema(RunCommandsInputSchema),
+		// Declarative metadata; runtime does not enforce this. Agent per-call
+		// timeoutMs (up to MAX_RUN_COMMANDS_TIMEOUT_MS) overrides the configured default.
 		timeoutMs: timeoutMs * 2,
 		retryable: false,
 		maxRetries: 0,
 		execute: async (input, context) => {
-			const commands = coalesceAdjacentStringHeredocs(
-				normalizeRunCommandsInput(input),
-			);
+			const { commands: rawCommands, timeoutMs: requestedTimeout } =
+				normalizeRunCommandsInput(input);
+			const commands = coalesceAdjacentStringHeredocs(rawCommands);
+
+			const effectiveTimeoutMs = requestedTimeout ?? timeoutMs;
+			const effectiveTimeoutSource: "default_setting" | "configured_setting" | "agent_requested" =
+				requestedTimeout !== undefined ? "agent_requested" : timeoutSource;
 
 			return executeShellCommands(commands, {
 				executor,
 				cwd,
 				context,
-				timeoutMs,
-				timeoutSource,
+				requestedTimeoutMs: requestedTimeout,
+				effectiveTimeoutMs,
+				timeoutSource: effectiveTimeoutSource,
 				telemetry: config.telemetry,
 			});
 		},

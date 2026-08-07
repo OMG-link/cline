@@ -75,12 +75,14 @@ export type SearchExecutor = (
  * @param command - Shell command to execute
  * @param cwd - Current working directory for execution
  * @param context - Tool execution context
+ * @param timeoutMs - Optional per-call timeout override; undefined falls back to the executor's default
  * @returns Command output (stdout)
  */
 export type ShellExecutor = (
 	command: string | StructuredCommandInput,
 	cwd: string,
 	context: AgentToolContext,
+	timeoutMs?: number,
 ) => Promise<string>;
 
 /**

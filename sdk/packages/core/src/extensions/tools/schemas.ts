@@ -146,10 +146,35 @@ export const StructuredCommandEntrySchema = z.union([
 	StructuredCommandInputSchema,
 ]);
 
+/** Maximum per-call timeout an agent can request for run_commands (1 hour). */
+export const MAX_RUN_COMMANDS_TIMEOUT_MS = 60 * 60 * 1000;
+
+export const TimeoutMsField = z
+	.number()
+	.int()
+	.min(1000)
+	.max(MAX_RUN_COMMANDS_TIMEOUT_MS)
+	.optional()
+	.describe(
+		`Optional max duration in milliseconds (max ${MAX_RUN_COMMANDS_TIMEOUT_MS} = 1 hour) that ` +
+		"this command will block the current task. The task will not proceed " +
+		"until the command finishes or the timeout expires, whichever comes first.",
+	);
+
+/**
+ * Wrapper schema for standalone timeoutMs validation. Produces field-name-bearing
+ * errors (e.g. "-> at timeoutMs") regardless of which union member the input
+ * would otherwise match.
+ */
+export const TimeoutMsValidationSchema = z.object({
+	timeoutMs: TimeoutMsField,
+});
+
 export const RunCommandsInputSchema = z.object({
 	commands: z
 		.array(CommandInputSchema)
 		.describe("Array of complete shell command strings to execute."),
+	timeoutMs: TimeoutMsField,
 });
 
 const StructuredCommandsInputSchema = z.object({

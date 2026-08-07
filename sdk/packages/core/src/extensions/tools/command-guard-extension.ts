@@ -46,14 +46,14 @@ export function createPlanModeCommandGuardExtension(
 			return undefined;
 		}
 
-		let commands: ReturnType<typeof normalizeRunCommandsInput>;
+		let parsed: ReturnType<typeof normalizeRunCommandsInput>;
 		try {
-			commands = normalizeRunCommandsInput(context.input);
+			parsed = normalizeRunCommandsInput(context.input);
 		} catch {
 			// Unparseable input: let the tool produce its own validation error.
 			return undefined;
 		}
-
+		const { commands } = parsed;
 		for (const command of commands) {
 			const blocked = findFileEditingCommand(command);
 			if (blocked) {

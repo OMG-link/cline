@@ -109,7 +109,7 @@ export const CORE_TELEMETRY_EVENTS = {
 export interface RunCommandsTimeoutTelemetryProperties {
 	tool_name: "run_commands";
 	effective_timeout_ms: number;
-	timeout_source: "default_setting" | "configured_setting";
+	timeout_source: "default_setting" | "configured_setting" | "agent_requested";
 	command_count: number;
 	duration_ms: number;
 	ulid?: string;

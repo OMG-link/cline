@@ -204,11 +204,11 @@ function createDetachedCommandLog(terminalCommand: string, existingLines: string
 
 type DetachReason = "user" | "timeout"
 
-function formatDetachedResult(logFilePath: string, output: string, reason: DetachReason): string {
+function formatDetachedResult(logFilePath: string, output: string, reason: DetachReason, autoProceedMs: number): string {
 	return [
 		reason === "user"
 			? "The user chose to proceed while the command is starting or still running in their terminal."
-			: `The command was still starting or running after ${FOREGROUND_COMMAND_AUTO_PROCEED_MS / 1000} seconds, so Cline automatically proceeded while leaving it running in the terminal.`,
+			: `The command was still starting or running after ${autoProceedMs / 1000} seconds, so Cline automatically proceeded while leaving it running in the terminal.`,
 		`This is partial output; further output is being redirected to this file, which you can read to check progress: ${logFilePath}`,
 		output.length > 0 ? `Output so far:\n${output}` : "No output so far.",
 	].join("\n")
@@ -225,7 +225,9 @@ export async function executeForeground(
 	abortSignal?: AbortSignal,
 	foregroundCommands?: SdkForegroundCommandCoordinator,
 	terminalProfileId?: string,
+	autoProceedMs?: number,
 ): Promise<string> {
+	const effectiveAutoProceedMs = Math.max(1000, autoProceedMs ?? FOREGROUND_COMMAND_AUTO_PROCEED_MS)
 	const terminalCommand = formatCommandForTerminal(command)
 
 	// "Proceed While Running": register a per-invocation handle so the user can
@@ -264,7 +266,7 @@ export async function executeForeground(
 	const unregister = foregroundCommands?.register({
 		detach: () => requestDetach("user"),
 	})
-	const autoProceedTimer = setTimeout(() => requestDetach("timeout"), FOREGROUND_COMMAND_AUTO_PROCEED_MS)
+	const autoProceedTimer = setTimeout(() => requestDetach("timeout"), effectiveAutoProceedMs)
 	const onAbort = (): void => {
 		if (state.phase === "waiting") {
 			state.phase = "aborted"
@@ -326,7 +328,7 @@ export async function executeForeground(
 				throw new Error("Detached command log was not initialized")
 			}
 			void acquisition.then((outcome) => finishDetachedAcquisition(outcome, log))
-			return formatDetachedResult(log.path, "", detachReason ?? "timeout")
+			return formatDetachedResult(log.path, "", detachReason ?? "timeout", effectiveAutoProceedMs)
 		}
 
 		// Acquisition and a user action can resolve in the same microtask turn.
@@ -343,7 +345,7 @@ export async function executeForeground(
 				throw new Error("Detached command log was not initialized")
 			}
 			finishDetachedAcquisition(firstOutcome, log)
-			return formatDetachedResult(log.path, "", detachReason ?? "timeout")
+			return formatDetachedResult(log.path, "", detachReason ?? "timeout", effectiveAutoProceedMs)
 		}
 		if (firstOutcome.type === "error") {
 			throw firstOutcome.error
@@ -433,7 +435,7 @@ export async function executeForeground(
 			})
 
 			if (detachedLog !== undefined) {
-				return formatDetachedResult(detachedLog.path, output, detachReason ?? "timeout")
+				return formatDetachedResult(detachedLog.path, output, detachReason ?? "timeout", effectiveAutoProceedMs)
 			}
 
 			const completionDetails = process.getCompletionDetails?.()
@@ -549,7 +551,7 @@ function createVscodeShellExecutor(options: VscodeRunCommandsToolOptions, state:
 	// Lazy-init terminal manager reference
 	let terminalManager: VscodeTerminalManager | undefined
 
-	return async (command, commandCwd, context): Promise<string> => {
+	return async (command, commandCwd, context, requestedTimeoutMs?: number): Promise<string> => {
 		Logger.log(`[VscodeRunCommands] Executing command in ${executionMode} mode`)
 
 		// Execute with the shell named in the model request that produced this
@@ -572,7 +574,7 @@ function createVscodeShellExecutor(options: VscodeRunCommandsToolOptions, state:
 			// Record execution outcomes so background mode is comparable with
 			// foreground mode in the same task.terminal_execution event.
 			try {
-				const result = await bgExecutor(command, commandCwd || cwd, context)
+				const result = await bgExecutor(command, commandCwd || cwd, context, requestedTimeoutMs)
 				telemetryService.captureTerminalExecution(true, "vscode", "child_process", {
 					exitCode: 0,
 					terminalExecutionMode: "backgroundExec",
@@ -599,6 +601,7 @@ function createVscodeShellExecutor(options: VscodeRunCommandsToolOptions, state:
 			context.signal,
 			options.foregroundCommands,
 			profileId,
+			requestedTimeoutMs,
 		)
 	}
 }
