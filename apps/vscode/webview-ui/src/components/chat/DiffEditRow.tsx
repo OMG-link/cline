@@ -244,13 +244,14 @@ const DiffLine = memo<{ line: string; lineNumber?: number; showLineNumberColumn?
 				</span>
 				{/* Code content */}
 				<span
+					data-testid="diff-code"
 					className={cn(
-						"flex-1 pr-2 py-0.5 whitespace-nowrap",
+						"flex-1 pr-2 py-0.5 whitespace-pre",
 						isAddition && "text-green-400",
 						isDeletion && "text-red-400",
 						!isAddition && !isDeletion && "text-editor-foreground",
 					)}>
-					{code}
+					{code || " "}
 				</span>
 			</div>
 		)
