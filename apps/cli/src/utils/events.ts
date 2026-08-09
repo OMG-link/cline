@@ -169,7 +169,7 @@ export function handleEvent(event: AgentEvent, config: Config): void {
 							`   ${c.gray}${HOOK}${c.reset}${c.red}error: ${event.error}${c.reset}\n`,
 						);
 					} else {
-						const outputStr = formatToolOutput(event.output);
+						const outputStr = formatToolOutput(event.output, event.toolName);
 						if (outputStr) {
 							const lines = formatResultLines(outputStr);
 							for (let i = 0; i < lines.length; i++) {

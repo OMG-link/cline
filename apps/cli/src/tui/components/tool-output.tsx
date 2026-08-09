@@ -326,7 +326,7 @@ export function ToolOutput(props: ToolOutputProps) {
 	if (toolName === "switch_to_act_mode") return null;
 	if (!outputSummary.trim() && !rawOutput) return null;
 
-	const fullText = rawOutput ? extractFullOutputText(rawOutput) : undefined;
+	const fullText = rawOutput ? extractFullOutputText(rawOutput, toolName) : undefined;
 
 	if (isAskTool(toolName)) {
 		const answer = (fullText || outputSummary).trim();

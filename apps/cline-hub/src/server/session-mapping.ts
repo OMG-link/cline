@@ -325,7 +325,7 @@ export function mapHistoryToWebviewMessages(
 						: ("output-available" as const),
 					input: existingToolEvent?.input,
 					output,
-					error: isError ? stringifyContent(output) : undefined,
+					error: isError ? stringifyContent(output, existingToolEvent?.name ?? name) : undefined,
 				};
 
 				if (currentBlockIndex !== undefined && existing?.type === "tool") {

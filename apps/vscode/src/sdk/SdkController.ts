@@ -391,8 +391,8 @@ export class Controller {
 			},
 			recordApprovedToolMessage: (toolCallId, messageTs) =>
 				this.messageTranslatorState.recordApprovedToolMessageTs(toolCallId, messageTs),
-			recordDeniedToolApproval: (toolCallId, toolName, reason) => {
-				this.messageTranslatorState.recordDeniedToolApproval(toolCallId, toolName, reason)
+			recordDeniedToolApproval: (toolCallId, toolName, reason, messageTs, input) => {
+				this.messageTranslatorState.recordDeniedToolApproval(toolCallId, toolName, reason, messageTs, input)
 				// A denied edit's executor never runs, so close its diff preview here. Covers
 				// manual Reject and clearPending (task cancel/abort) in one place.
 				void this.diffEdits.discardPreview(toolCallId)

@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { appendFileSync, existsSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { type HookEventPayload, parseHookEventPayload } from "@cline/shared";
+import { type HookEventPayload, isCommandTool, parseHookEventPayload } from "@cline/shared";
 import { ensureHookLogDir } from "@cline/shared/storage";
 import { nanoid } from "nanoid";
 import { commanderToParsedArgs, createProgram } from "../commands/program";
@@ -289,7 +289,7 @@ export function formatToolInput(toolName: string, input: unknown): string {
 	return truncate(JSON.stringify(input), 60);
 }
 
-export function formatToolOutput(output: unknown): string {
+export function formatToolOutput(output: unknown, toolName?: string): string {
 	if (output === null || output === undefined) {
 		return "";
 	}
@@ -330,7 +330,9 @@ export function formatToolOutput(output: unknown): string {
 								)
 								.filter(Boolean)
 								.join(" ") || "Successfully read image"
-						: String(result ?? "");
+						: isCommandTool(toolName) && typeof result === "object" && result !== null
+							? String((result as { output?: unknown }).output ?? "")
+							: String(result ?? "");
 					return truncate(resultStr, 80);
 				}
 				return truncate(JSON.stringify(item), 80);

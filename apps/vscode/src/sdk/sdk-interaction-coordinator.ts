@@ -23,7 +23,7 @@ export interface SdkInteractionCoordinatorOptions {
 	postStateToWebview: () => Promise<void>
 	shouldAutoApproveTool?: (request: ToolApprovalRequest) => boolean
 	recordApprovedToolMessage?: (toolCallId: string, messageTs: number) => void
-	recordDeniedToolApproval?: (toolCallId: string, toolName: string, reason: string) => void
+	recordDeniedToolApproval?: (toolCallId: string, toolName: string, reason: string, messageTs?: number, input?: unknown) => void
 	/**
 	 * The process-wide id/seq/epoch authority, shared with the message translator. Optional so
 	 * existing tests that don't need cross-generator id uniqueness keep working; when omitted a
@@ -69,6 +69,7 @@ export class SdkInteractionCoordinator {
 				toolCallId: string
 				messageTs: number
 				toolName: string
+			input?: unknown
 		  }
 		| undefined
 
@@ -145,6 +146,7 @@ export class SdkInteractionCoordinator {
 				toolCallId: request.toolCallId,
 				messageTs: toolAskMessage.ts,
 				toolName: request.toolName,
+			input: request.input,
 			}
 		})
 	}
@@ -232,7 +234,7 @@ export class SdkInteractionCoordinator {
 			})
 		}
 		if (!approved && pendingMessage) {
-			this.options.recordDeniedToolApproval?.(pendingMessage.toolCallId, pendingMessage.toolName, denialReason)
+			this.options.recordDeniedToolApproval?.(pendingMessage.toolCallId, pendingMessage.toolName, denialReason, pendingMessage.messageTs, pendingMessage.input)
 		}
 		resolve({
 			approved,
@@ -287,7 +289,7 @@ export class SdkInteractionCoordinator {
 			// denial is already recorded, the translator renders those events as a
 			// second tool row next to the still-visible approval ask.
 			if (pendingMessage) {
-				this.options.recordDeniedToolApproval?.(pendingMessage.toolCallId, pendingMessage.toolName, reason)
+				this.options.recordDeniedToolApproval?.(pendingMessage.toolCallId, pendingMessage.toolName, reason, pendingMessage.messageTs, pendingMessage.input)
 			}
 			this.pendingToolApprovalResolve({ approved: false, reason })
 			this.pendingToolApprovalResolve = undefined

@@ -171,6 +171,28 @@ export interface QueuedPrompt {
 	attachmentCount: number
 }
 
+export const COMMAND_STATUS = {
+	PENDING: "pending",
+	RUNNING: "running",
+	COMPLETED: "completed",
+	TIMEOUT_KILLED: "timeout_killed",
+	TIMEOUT_DETACHED: "timeout_detached",
+	DETACHED: "detached",
+	CANCELLED: "cancelled",
+	FAILED: "failed",
+	REJECTED: "rejected",
+	UNKNOWN: "unknown",
+} as const
+
+export type CommandStateStatus = (typeof COMMAND_STATUS)[keyof typeof COMMAND_STATUS]
+
+export interface CommandState {
+	status: CommandStateStatus
+	exitCode?: number
+	duration?: number
+	startedAt?: number
+}
+
 export interface ClineMessage {
 	ts: number
 	type: "ask" | "say"
@@ -194,6 +216,8 @@ export interface ClineMessage {
 	 */
 	epoch?: number
 	commandCompleted?: boolean
+	commandStates?: CommandState[]
+	commandTimeoutMs?: number
 	lastCheckpointHash?: string
 	isCheckpointCheckedOut?: boolean
 	isOperationOutsideWorkspace?: boolean

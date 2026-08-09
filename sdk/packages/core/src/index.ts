@@ -898,6 +898,7 @@ export {
 	TEAM_TOOL_NAMES,
 	type ToolCatalogEntry,
 	type ToolExecutors,
+	type ToolOperationResult,
 	type ToolPolicyPresetName,
 	type ToolPresetName,
 	ToolPresets,

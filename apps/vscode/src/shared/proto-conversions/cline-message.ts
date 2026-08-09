@@ -1,5 +1,5 @@
 import { ClineAsk as AppClineAsk, ClineMessage as AppClineMessage, ClineSay as AppClineSay } from "@shared/ExtensionMessage"
-import { ClineAsk, ClineMessageType, ClineSay, ClineMessage as ProtoClineMessage } from "@shared/proto/cline/ui"
+import { ClineAsk, ClineMessageType, ClineSay, ClineMessage as ProtoClineMessage, CommandStatus } from "@shared/proto/cline/ui"
 
 // Helper function to convert ClineAsk string to enum
 function convertClineAskToProtoEnum(ask: AppClineAsk | undefined): ClineAsk | undefined {
@@ -163,6 +163,33 @@ function convertProtoEnumToClineSay(say: ClineSay): AppClineSay | undefined {
 	return mapping[say]
 }
 
+const commandStatusToProtoMap: Record<string, CommandStatus> = {
+	pending: CommandStatus.COMMAND_STATUS_PENDING,
+	running: CommandStatus.COMMAND_STATUS_RUNNING,
+	completed: CommandStatus.COMMAND_STATUS_COMPLETED,
+	timeout_killed: CommandStatus.COMMAND_STATUS_TIMEOUT_KILLED,
+	timeout_detached: CommandStatus.COMMAND_STATUS_TIMEOUT_DETACHED,
+	detached: CommandStatus.COMMAND_STATUS_DETACHED,
+	cancelled: CommandStatus.COMMAND_STATUS_CANCELLED,
+	rejected: CommandStatus.COMMAND_STATUS_REJECTED,
+	failed: CommandStatus.COMMAND_STATUS_FAILED,
+	unknown: CommandStatus.COMMAND_STATUS_UNSPECIFIED,
+}
+
+const protoToCommandStatusMap: Record<CommandStatus, CommandStateStatus> = {
+	[CommandStatus.COMMAND_STATUS_PENDING]: "pending",
+	[CommandStatus.COMMAND_STATUS_RUNNING]: "running",
+	[CommandStatus.COMMAND_STATUS_COMPLETED]: "completed",
+	[CommandStatus.COMMAND_STATUS_TIMEOUT_KILLED]: "timeout_killed",
+	[CommandStatus.COMMAND_STATUS_TIMEOUT_DETACHED]: "timeout_detached",
+	[CommandStatus.COMMAND_STATUS_DETACHED]: "detached",
+	[CommandStatus.COMMAND_STATUS_CANCELLED]: "cancelled",
+	[CommandStatus.COMMAND_STATUS_REJECTED]: "rejected",
+	[CommandStatus.COMMAND_STATUS_FAILED]: "failed",
+	[CommandStatus.COMMAND_STATUS_UNSPECIFIED]: "unknown",
+	[CommandStatus.UNRECOGNIZED]: "unknown",
+}
+
 /**
  * Convert application ClineMessage to proto ClineMessage
  */
@@ -214,6 +241,13 @@ export function convertClineMessageToProto(message: AppClineMessage): ProtoCline
 		askNewTask: undefined,
 		apiReqInfo: undefined,
 		modelInfo: message.modelInfo ?? undefined,
+		commandStates: (message.commandStates ?? []).map((cs) => ({
+			status: commandStatusToProtoMap[cs.status] ?? CommandStatus.COMMAND_STATUS_UNSPECIFIED,
+			exitCode: cs.exitCode ?? 0,
+			duration: cs.duration ?? 0,
+			startedAt: cs.startedAt ?? 0,
+		})),
+		commandTimeoutMs: message.commandTimeoutMs ?? 0,
 	}
 
 	return protoMessage
@@ -288,6 +322,19 @@ export function convertProtoToClineMessage(protoMessage: ProtoClineMessage): App
 	}
 	if (protoMessage.epoch && protoMessage.epoch !== 0) {
 		message.epoch = protoMessage.epoch
+	}
+
+	// Command status bar fields
+	if (protoMessage.commandStates && protoMessage.commandStates.length > 0) {
+		message.commandStates = protoMessage.commandStates.map((cs) => ({
+			status: protoToCommandStatusMap[cs.status] ?? "unknown",
+			...(cs.exitCode !== 0 && { exitCode: cs.exitCode }),
+			...(cs.duration !== 0 && { duration: cs.duration }),
+			...(cs.startedAt !== 0 && { startedAt: cs.startedAt }),
+		}))
+	}
+	if (protoMessage.commandTimeoutMs && protoMessage.commandTimeoutMs !== 0) {
+		message.commandTimeoutMs = protoMessage.commandTimeoutMs
 	}
 
 	return message

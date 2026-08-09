@@ -20,7 +20,7 @@ import {
 	type StructuredCommandInput,
 	truncateCommandOutput,
 } from "@cline/core"
-import type { AgentTool } from "@cline/shared"
+import type { AgentTool, AgentToolContext, CommandStatusUpdate } from "@cline/shared"
 import { TerminalUserInterventionAction, telemetryService } from "@services/telemetry"
 import { ClineTempManager } from "@services/temp"
 import * as fs from "fs"
@@ -42,9 +42,6 @@ import type { SdkForegroundCommandCoordinator } from "./sdk-foreground-command-c
 
 type ShellCommand = string | StructuredCommandInput
 type VscodeTerminalExecutionMode = "vscodeTerminal" | "backgroundExec"
-
-/** Foreground VS Code terminals cannot be forcibly terminated; give long-running commands room to finish. */
-export const VSCODE_FOREGROUND_RUN_COMMANDS_TIMEOUT_MS = 60 * 60 * 1000
 
 /** Release the agent turn if a foreground command is still running after 300 seconds. */
 export const FOREGROUND_COMMAND_AUTO_PROCEED_MS = 300 * 1000
@@ -226,6 +223,7 @@ export async function executeForeground(
 	foregroundCommands?: SdkForegroundCommandCoordinator,
 	terminalProfileId?: string,
 	autoProceedMs?: number,
+	context?: AgentToolContext,
 ): Promise<string> {
 	const effectiveAutoProceedMs = Math.max(1000, autoProceedMs ?? FOREGROUND_COMMAND_AUTO_PROCEED_MS)
 	const terminalCommand = formatCommandForTerminal(command)
@@ -250,6 +248,43 @@ export async function executeForeground(
 	const preStartControl = new Promise<PreStartControl>((resolve) => {
 		resolvePreStartControl = resolve
 	})
+	const emitUpdate = (update: CommandStatusUpdate): void => {
+		context?.emitUpdate?.(update)
+	}
+
+	// Emit detach lifecycle event and set metadata flags. Shared by requestDetach
+	// (waiting phase) and applyDetach (started phase) to avoid duplication.
+	const emitDetachUpdate = (reason: DetachReason): void => {
+		if (context?.metadata) {
+			context.metadata.detached = true
+			context.metadata.detachReason = reason
+		}
+		const commandIndex = context?.metadata?.commandIndex as number | undefined
+		// The detach event must target the right command in a parallel batch;
+		// without the index we cannot identify it, so drop the event rather
+		// than silently updating command 0.
+		if (commandIndex === undefined) {
+			Logger.warn("[VscodeRunCommands] Detach requested but commandIndex metadata is missing; dropping live detach event")
+			return
+		}
+		const cmdStartedAt = context?.metadata?.startedAt as number | undefined
+		const duration = cmdStartedAt ? Date.now() - cmdStartedAt : 0
+		if (reason === "timeout") {
+			emitUpdate({
+				event: "timeout",
+				type: "detached",
+				commandIndex,
+				duration,
+			})
+		} else {
+			emitUpdate({
+				event: "detached",
+				commandIndex,
+				duration,
+			})
+		}
+	}
+
 	const requestDetach = (reason: DetachReason): void => {
 		if (state.phase === "waiting") {
 			state.phase = "detached"
@@ -258,6 +293,7 @@ export async function executeForeground(
 			if (reason === "user") {
 				telemetryService.captureTerminalUserIntervention(TerminalUserInterventionAction.PROCESS_WHILE_RUNNING, "vscode")
 			}
+			emitDetachUpdate(reason)
 			resolvePreStartControl("detach")
 		} else if (state.phase === "started") {
 			applyDetach?.(reason)
@@ -411,6 +447,7 @@ export async function executeForeground(
 						"vscode",
 					)
 				}
+				emitDetachUpdate(reason)
 				// detach() flushes any partial line (reaching both bufferLine and
 				// the log) before resolving the awaited promise. After that the
 				// partial output is final: stop buffering so the remaining
@@ -602,6 +639,7 @@ function createVscodeShellExecutor(options: VscodeRunCommandsToolOptions, state:
 			options.foregroundCommands,
 			profileId,
 			requestedTimeoutMs,
+			context,
 		)
 	}
 }

@@ -7,6 +7,8 @@
 import {
 	type AgentTool,
 	type AgentToolContext,
+	type CommandExecutionResult,
+	type CommandStatusUpdate,
 	createTool,
 	getDefaultShell,
 	getShellKind,
@@ -92,7 +94,7 @@ function captureRunCommandsTimeoutFromContext(
 		effectiveTimeoutMs: number;
 		timeoutSource: "default_setting" | "configured_setting" | "agent_requested";
 		commandCount: number;
-		durationMs: number;
+		duration: number;
 	},
 ): void {
 	captureRunCommandsTimeout(telemetry, {
@@ -100,7 +102,7 @@ function captureRunCommandsTimeoutFromContext(
 		effective_timeout_ms: properties.effectiveTimeoutMs,
 		timeout_source: properties.timeoutSource,
 		command_count: properties.commandCount,
-		duration_ms: properties.durationMs,
+		duration_ms: properties.duration,
 		ulid: context.sessionId,
 		mode: getStringMetadata(context, "mode"),
 		source: getStringMetadata(context, "source"),
@@ -194,45 +196,126 @@ async function executeShellCommands(
 ): Promise<ToolOperationResult[]> {
 	const { executor, cwd, context, requestedTimeoutMs, effectiveTimeoutMs, timeoutSource, telemetry } =
 		options;
+	const emitUpdate = (update: CommandStatusUpdate): void => {
+		context.emitUpdate?.(update);
+	}
 
 	return Promise.all(
-		commands.map(async (command): Promise<ToolOperationResult> => {
+		commands.map(async (command, index): Promise<ToolOperationResult> => {
 			const startedAt = Date.now();
 			const query = formatRunCommandQueryPreview(command);
+
+			// Spread creates an independent metadata copy per command so parallel
+			// commands in the same batch do not race on shared metadata fields.
+			const cmdContext: AgentToolContext = {
+				...context,
+				metadata: { ...context.metadata, commandIndex: index, startedAt },
+			};
+
+			emitUpdate({
+				event: "started",
+				commandIndex: index,
+				startedAt,
+				timeoutMs: effectiveTimeoutMs,
+			});
+
 			try {
 				const output = await withTimeout(
-					executor(command, cwd, context, requestedTimeoutMs),
+					executor(command, cwd, cmdContext, requestedTimeoutMs),
 					effectiveTimeoutMs + SHELL_TIMEOUT_GRACE_PERIOD_MS,
 					`Command timed out after ${effectiveTimeoutMs}ms`,
 				);
+				const duration = Date.now() - startedAt;
+				const detached = cmdContext.metadata?.detached === true;
+				const detachStatus: "timeout_detached" | "detached" | undefined =
+					detached
+						? cmdContext.metadata?.detachReason === "user"
+							? "detached"
+							: "timeout_detached"
+						: undefined;
+
+				if (!detached) {
+					emitUpdate({
+						event: "completed",
+						commandIndex: index,
+						exitCode: 0,
+						duration: duration,
+					});
+				}
+
 				return {
 					query,
-					result: output,
+					result: { output, exitCode: 0, status: detachStatus ?? "completed", timeoutMs: effectiveTimeoutMs } satisfies CommandExecutionResult,
 					success: true,
+					duration,
 				};
 			} catch (error) {
+				const duration = Date.now() - startedAt;
+
+				if (context.signal?.aborted) {
+					emitUpdate({
+						event: "cancelled",
+						commandIndex: index,
+						duration: duration,
+					});
+					return {
+						query,
+						result: { output: "", status: "cancelled", timeoutMs: effectiveTimeoutMs } satisfies CommandExecutionResult,
+						error: "Command was aborted",
+						success: false,
+						duration,
+					};
+				}
+
 				if (error instanceof TimeoutError) {
 					captureRunCommandsTimeoutFromContext(telemetry, context, {
 						effectiveTimeoutMs,
 						timeoutSource,
 						commandCount: commands.length,
-						durationMs: Date.now() - startedAt,
+						duration: duration,
 					});
-				}
-				if (error instanceof CommandExitError) {
+					emitUpdate({
+						event: "timeout",
+						type: "killed",
+						commandIndex: index,
+						duration: duration,
+					});
 					return {
 						query,
-						result: error.output,
+						result: { output: "", status: "timeout_killed", timeoutMs: effectiveTimeoutMs } satisfies CommandExecutionResult,
+						error: `Command timed out after ${effectiveTimeoutMs}ms`,
+						success: false,
+						duration,
+					};
+				}
+				if (error instanceof CommandExitError) {
+					emitUpdate({
+						event: "completed",
+						commandIndex: index,
+						exitCode: error.exitCode,
+						duration: duration,
+					});
+					return {
+						query,
+						result: { output: error.output ?? "", exitCode: error.exitCode, status: "completed", timeoutMs: effectiveTimeoutMs } satisfies CommandExecutionResult,
 						error: error.message,
 						success: false,
+						duration,
 					};
 				}
 				const msg = formatError(error);
+				emitUpdate({
+					event: "failed",
+					commandIndex: index,
+					error: msg,
+					duration: duration,
+				});
 				return {
 					query,
-					result: "",
+					result: { output: "", status: "failed", timeoutMs: effectiveTimeoutMs } satisfies CommandExecutionResult,
 					error: `Command failed: ${msg}`,
 					success: false,
+					duration,
 				};
 			}
 		}),

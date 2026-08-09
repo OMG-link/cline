@@ -6,7 +6,7 @@ import { resolveMcpServerTimeoutMs } from "@/services/mcp/timeout"
 import { Logger } from "@/shared/services/Logger"
 import type { SdkForegroundCommandCoordinator } from "./sdk-foreground-command-coordinator"
 import { createVscodeGetDiagnosticsTool } from "./vscode-get-diagnostics-tool"
-import { createVscodeRunCommandsTool, VSCODE_FOREGROUND_RUN_COMMANDS_TIMEOUT_MS } from "./vscode-run-commands-tool"
+import { createVscodeRunCommandsTool, FOREGROUND_COMMAND_AUTO_PROCEED_MS } from "./vscode-run-commands-tool"
 
 interface McpToolDescriptor {
 	name: string
@@ -100,13 +100,13 @@ export async function createVscodeExtraTools(mcpHub: McpHub, options?: VscodeExt
 			createVscodeRunCommandsTool({
 				cwd: options.cwd ?? process.cwd(),
 				getTerminalManager: options.getTerminalManager,
-				bashTimeoutMs: executionMode === "vscodeTerminal" ? VSCODE_FOREGROUND_RUN_COMMANDS_TIMEOUT_MS : undefined,
+				bashTimeoutMs: executionMode === "vscodeTerminal" ? FOREGROUND_COMMAND_AUTO_PROCEED_MS : undefined,
 				vscodeTerminalExecutionMode: executionMode,
 				foregroundCommands: options.foregroundCommands,
 			}),
 		)
 		Logger.log(
-			`[VscodeRuntimeTools] Added custom run_commands tool (mode=${executionMode}, timeoutMs=${executionMode === "vscodeTerminal" ? VSCODE_FOREGROUND_RUN_COMMANDS_TIMEOUT_MS : "default"})`,
+			`[VscodeRuntimeTools] Added custom run_commands tool (mode=${executionMode}, timeoutMs=${executionMode === "vscodeTerminal" ? FOREGROUND_COMMAND_AUTO_PROCEED_MS : "default"})`,
 		)
 	}
 

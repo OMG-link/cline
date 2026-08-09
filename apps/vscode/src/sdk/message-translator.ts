@@ -26,10 +26,9 @@
 // - SDK "agent_event" usage → ClineMessage say="api_req_started" with ClineApiReqInfo JSON
 // - SDK "ended" event → finalizes the session
 
-import type { CoreSessionEvent } from "@cline/core"
-import { PATCH_MARKERS } from "@cline/core"
+import { PATCH_MARKERS, type CoreSessionEvent, type ToolOperationResult } from "@cline/core"
 import type { Message as SdkMessage } from "@cline/llms"
-import { type AgentEvent, formatDisplayUserInput } from "@cline/shared"
+import { type AgentEvent, type CommandExecutionResult, type CommandStatusUpdate, COMMAND_TERMINAL_STATUSES, formatDisplayUserInput, PROTECTED_TERMINAL_STATUSES } from "@cline/shared"
 import { COMMAND_OUTPUT_STRING } from "@shared/combineCommandSequences"
 import type {
 	ClineApiReqInfo,
@@ -37,6 +36,8 @@ import type {
 	ClineAskUseSubagents,
 	ClineCompactionInfo,
 	ClineMessage,
+	CommandState,
+	CommandStateStatus,
 	ClineSay,
 	ClineSaySubagentStatus,
 	ClineSayTool,
@@ -130,6 +131,10 @@ export class MessageTranslatorState {
 	private streamingToolInput: unknown | undefined
 	/** Stored tool name from content_start — used at content_end for consistency */
 	private streamingToolName: string | undefined
+	/** Per-command status states for the current streaming run_commands tool call */
+	private commandStates: CommandState[] | undefined
+	/** Shared timeout for all commands in the current streaming run_commands tool call */
+	private commandTimeoutMs: number | undefined
 	/** Approved tool-call ids mapped to the approval row that should be updated in place. */
 	private approvedToolMessageTsByCallId = new Map<string, number>()
 	/**
@@ -141,7 +146,10 @@ export class MessageTranslatorState {
 	 */
 	private openCompactionTs: number | undefined
 	/** Tool calls rejected by the user; they should not render as red tool failures. */
-	private deniedToolApprovalsByCallId = new Map<string, { toolName: string; reason: string }>()
+	private deniedToolApprovalsByCallId = new Map<
+		string,
+		{ toolName: string; reason: string; messageTs?: number; input?: unknown }
+	>()
 	/**
 	 * Process-wide id/seq/epoch authority. Shared with the interaction coordinator and history
 	 * rendering so that message ids never collide across generators. See message-id-minter.ts.
@@ -270,12 +278,32 @@ export class MessageTranslatorState {
 		this.approvedToolMessageTsByCallId.clear()
 	}
 
-	recordDeniedToolApproval(toolCallId: string, toolName: string, reason: string): void {
-		this.deniedToolApprovalsByCallId.set(toolCallId, { toolName, reason })
+	recordDeniedToolApproval(
+		toolCallId: string,
+		toolName: string,
+		reason: string,
+		messageTs?: number,
+		input?: unknown,
+	): void {
+		this.deniedToolApprovalsByCallId.set(toolCallId, { toolName, reason, messageTs, input })
 	}
 
 	isToolApprovalDenied(toolCallId: string | undefined): boolean {
 		return toolCallId !== undefined && this.deniedToolApprovalsByCallId.has(toolCallId)
+	}
+
+	/**
+	 * Returns the stored denial record (toolName, reason, messageTs, input) for a tool call.
+	 * The entry is NOT removed — denial must persist past content_end so the follow-on
+	 * error event can also be suppressed.
+	 */
+	getDeniedToolApproval(
+		toolCallId: string | undefined,
+	): { toolName: string; reason: string; messageTs?: number; input?: unknown } | undefined {
+		if (toolCallId === undefined) {
+			return undefined
+		}
+		return this.deniedToolApprovalsByCallId.get(toolCallId)
 	}
 
 	/**
@@ -321,12 +349,40 @@ export class MessageTranslatorState {
 		return this.streamingToolName
 	}
 
+	/** Initialize per-command states for a run_commands tool call */
+	initCommandStates(count: number): void {
+		this.commandStates = Array.from({ length: count }, () => ({ status: "pending" as const }))
+	}
+
+	/** Get the current per-command states */
+	getCommandStates(): CommandState[] | undefined {
+		return this.commandStates
+	}
+
+	/** Update a specific command state by index */
+	updateCommandState(index: number, state: Partial<CommandState>): void {
+		if (!this.commandStates || index >= this.commandStates.length) return
+		this.commandStates[index] = { ...this.commandStates[index], ...state }
+	}
+
+	/** Get the shared command timeout */
+	getCommandTimeoutMs(): number | undefined {
+		return this.commandTimeoutMs
+	}
+
+	/** Set the shared command timeout */
+	setCommandTimeoutMs(ms: number): void {
+		this.commandTimeoutMs = ms
+	}
+
 	/** Clear streaming tool */
 	clearStreamingTool(): number {
 		const ts = this.streamingToolTs ?? this.nextTs()
 		this.streamingToolTs = undefined
 		this.streamingToolInput = undefined
 		this.streamingToolName = undefined
+		this.commandStates = undefined
+		this.commandTimeoutMs = undefined
 		return ts
 	}
 
@@ -1052,9 +1108,17 @@ export function extractToolOutputText(output: unknown): string {
 			} else if (typeof item === "object" && item !== null) {
 				const record = item as Record<string, unknown>
 				// ToolOperationResult has { query, result, success, error? }
-				if ("result" in record && typeof record.result === "string" && record.result) {
-					parts.push(record.result)
-				} else if ("error" in record && typeof record.error === "string" && record.error) {
+				// For run_commands, result is a CommandExecutionResult object;
+				// for other tools, result is a plain string.
+				if ("result" in record) {
+					const cmdResult = extractCommandResult(record.result)
+					if (cmdResult) {
+						if (cmdResult.output) parts.push(cmdResult.output)
+					} else if (typeof record.result === "string" && record.result) {
+						parts.push(record.result)
+					}
+				}
+				if ("error" in record && typeof record.error === "string" && record.error) {
 					parts.push(record.error)
 				}
 			}
@@ -1129,6 +1193,61 @@ function extractCommandText(input: unknown): string {
 	)
 }
 
+function extractCommandCount(input: unknown): number {
+	if (Array.isArray(input)) return input.length
+	const parsedInput = parseToolInput(input)
+	if (parsedInput?.commands && Array.isArray(parsedInput.commands)) {
+		return parsedInput.commands.length
+	}
+	return 1
+}
+
+function extractToolOperationResults(output: unknown): Partial<ToolOperationResult>[] {
+	if (!Array.isArray(output)) return []
+	return output.filter(
+		(item): item is Partial<ToolOperationResult> =>
+			item != null && typeof item === "object" && "query" in item,
+	)
+}
+
+/**
+ * Extract a {@link CommandExecutionResult} from a `ToolOperationResult.result`
+ * value. Returns `undefined` when the value is not a command result object
+ * (e.g. a plain string from read_files or search_codebase) or when it does not
+ * match the expected shape (non-string output, or a status outside the known
+ * terminal set), so malformed data is not silently treated as a valid result.
+ */
+function extractCommandResult(result: unknown): CommandExecutionResult | undefined {
+	if (typeof result !== "object" || result === null || !("output" in result)) {
+		return undefined
+	}
+	const candidate = result as Record<string, unknown>
+	if (typeof candidate.output !== "string") {
+		return undefined
+	}
+	const status = candidate.status
+	if (status !== undefined && (typeof status !== "string" || !COMMAND_TERMINAL.has(status))) {
+		return undefined
+	}
+	return result as CommandExecutionResult
+}
+
+const PROTECTED_TERMINAL = new Set<string>(PROTECTED_TERMINAL_STATUSES)
+const COMMAND_TERMINAL = new Set<string>(COMMAND_TERMINAL_STATUSES)
+
+function buildCommandUpdateMessage(state: MessageTranslatorState, commandText: string): ClineMessage {
+	return {
+		ts: state.getStreamingToolTs(),
+		type: "say",
+		say: "command",
+		text: commandText,
+		partial: true,
+		commandStates: state.getCommandStates(),
+		commandTimeoutMs: state.getCommandTimeoutMs(),
+	}
+}
+
+
 /**
  * Build the Cline approval ask message for an SDK tool approval request.
  * Keeps approval prompts aligned with the SDK event translator so the webview
@@ -1154,6 +1273,7 @@ export function buildToolApprovalAskMessage(toolName: string, input: unknown, ts
 			ask: "command",
 			text: extractCommandText(input),
 			partial: false,
+			commandStates: Array.from({ length: extractCommandCount(input) }, () => ({ status: "pending" as const })),
 		}
 	}
 
@@ -1353,16 +1473,15 @@ function translateAgentEvent(event: AgentEvent, state: MessageTranslatorState): 
 					// because the webview renders commands differently
 					if (toolName === "run_commands" || toolName === "execute_command") {
 						const commandText = extractCommandText(input)
-						// ChatRow treats a command row as "executing" while the COMMAND_OUTPUT_STRING
-						// marker is present in the text (and the row isn't yet completed). Include the
-						// marker on the running row so it reflects the executing state. content_end
-						// rebuilds the full text (command + marker + output) and sets commandCompleted.
+						const commandCount = extractCommandCount(input)
+						state.initCommandStates(commandCount)
 						messages.push({
 							ts: state.getStreamingToolTs(),
 							type: "say",
 							say: "command",
 							text: `${commandText}\n${COMMAND_OUTPUT_STRING}`,
 							partial: true,
+							commandStates: state.getCommandStates(),
 						})
 						break
 					}
@@ -1470,6 +1589,53 @@ function translateAgentEvent(event: AgentEvent, state: MessageTranslatorState): 
 			}
 
 			// For all other tools, content_update is ignored — the
+			// run_commands / execute_command per-command status updates
+			if (updateToolName === "run_commands" || updateToolName === "execute_command") {
+				const payload = event.update as CommandStatusUpdate
+				const idx = payload.commandIndex ?? 0
+				// Preserve the command text so content_update replaces the content_start
+				// row in place without wiping out the rendered command.
+				const commandText = extractCommandText(state.getStreamingToolInput())
+
+				const existing = state.getCommandStates()?.[idx]
+				if (existing && PROTECTED_TERMINAL.has(existing.status)) {
+					messages.push(buildCommandUpdateMessage(state, commandText))
+					break
+				}
+
+				switch (payload.event) {
+					case "started":
+						state.updateCommandState(idx, { status: "running", startedAt: payload.startedAt })
+						state.setCommandTimeoutMs(payload.timeoutMs)
+						break
+					case "completed":
+						state.updateCommandState(idx, {
+							status: "completed",
+							exitCode: payload.exitCode,
+							duration: payload.duration,
+						})
+						break
+					case "timeout":
+						state.updateCommandState(idx, {
+							status: payload.type === "detached" ? "timeout_detached" : "timeout_killed",
+							duration: payload.duration,
+						})
+						break
+					case "detached":
+						state.updateCommandState(idx, { status: "detached", duration: payload.duration })
+						break
+					case "cancelled":
+						state.updateCommandState(idx, { status: "cancelled", duration: payload.duration })
+						break
+					case "failed":
+						state.updateCommandState(idx, { status: "failed", duration: payload.duration })
+						break
+				}
+
+				messages.push(buildCommandUpdateMessage(state, commandText))
+				break
+			}
+
 			// content_start message with partial=true is sufficient until
 			// content_end finalizes it.
 			break
@@ -1515,7 +1681,27 @@ function translateAgentEvent(event: AgentEvent, state: MessageTranslatorState): 
 					state.clearTurnFinalText()
 
 					if (state.checkDeniedToolApproval(event.toolCallId) || isKnownToolApprovalDenial(event.error)) {
-						state.clearStreamingTool()
+						const denial = state.getDeniedToolApproval(event.toolCallId)
+						const deniedToolName = denial?.toolName ?? state.getStreamingToolName() ?? toolName
+						const storedInput = denial?.input ?? state.getStreamingToolInput()
+						const commandStates = state.getCommandStates()
+						const ts = state.clearStreamingTool()
+						const finalTs = denial?.messageTs ?? ts
+						// For command tools, finalize with a "rejected" status so the UI
+						// does not leave the row stuck on the streaming partial state.
+						if (deniedToolName === "run_commands" || deniedToolName === "execute_command") {
+							const commandText = extractCommandText(storedInput)
+							const count = commandStates?.length ?? extractCommandCount(storedInput) ?? 1
+							messages.push({
+								ts: finalTs,
+								type: "say",
+								say: "command",
+								text: commandText,
+								partial: false,
+								commandCompleted: true,
+								commandStates: Array.from({ length: count }, () => ({ status: "rejected" as const })),
+							})
+						}
 						break
 					}
 
@@ -1626,7 +1812,33 @@ function translateAgentEvent(event: AgentEvent, state: MessageTranslatorState): 
 						const storedInput = state.getStreamingToolInput()
 						const commandText = extractCommandText(storedInput)
 						const outputStr = event.error ? `Error: ${event.error}` : extractToolOutputText(event.output)
+						const existingStates = state.getCommandStates()
+						const streamingTimeoutMs = state.getCommandTimeoutMs()
 						const ts = state.clearStreamingTool()
+						const results = extractToolOperationResults(event.output)
+
+						let finalStates: CommandState[] | undefined
+						if (results.length === 0) {
+							const count = existingStates?.length ?? extractCommandCount(storedInput) ?? 1
+							finalStates = Array.from({ length: count }, () => ({ status: "cancelled" as const }))
+						} else {
+							finalStates = results.map((r, i) => {
+								const existing = existingStates?.[i]
+								if (existing && PROTECTED_TERMINAL.has(existing.status)) {
+									return existing
+								}
+								const cmdResult = extractCommandResult(r.result)
+								return {
+									status: (cmdResult?.status as CommandStateStatus) ?? "completed",
+									exitCode: cmdResult?.exitCode,
+									duration: r.duration,
+								}
+							})
+						}
+
+						const firstCmdResult = extractCommandResult(results[0]?.result)
+						const timeoutMs = streamingTimeoutMs ?? firstCmdResult?.timeoutMs
+
 						messages.push({
 							ts,
 							type: "say",
@@ -1634,6 +1846,8 @@ function translateAgentEvent(event: AgentEvent, state: MessageTranslatorState): 
 							text: outputStr ? `${commandText}\n${COMMAND_OUTPUT_STRING}\n${outputStr}` : commandText,
 							partial: false,
 							commandCompleted: true,
+							...(finalStates !== undefined ? { commandStates: finalStates } : {}),
+							commandTimeoutMs: timeoutMs,
 						})
 						break
 					}
@@ -2240,7 +2454,7 @@ function finalizePersistedToolUse(
 			toolName: toolUse.name,
 			toolCallId: toolUse.id,
 			input: toolUse.input,
-		} as AgentEvent,
+		},
 		state,
 	)
 
@@ -2252,7 +2466,7 @@ function finalizePersistedToolUse(
 			toolCallId: toolUse.id,
 			output,
 			error: isError ? extractToolOutputText(output) : undefined,
-		} as AgentEvent,
+		},
 		state,
 	)
 }

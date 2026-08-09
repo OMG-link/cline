@@ -304,9 +304,26 @@ function appendReasoningDelta(
 
 type ToolResultEntry = {
 	query?: string;
-	result?: string;
+	result?: unknown;
 	success?: boolean;
 };
+
+/**
+ * Local copy of isCommandTool — this webview does not depend on @cline/shared.
+ * Keep in sync with the shared version in @cline/shared/tools/command-events.ts.
+ * @see {@link https://github.com/cline/cline/blob/main/sdk/packages/shared/src/tools/command-events.ts}
+ */
+function isCommandTool(name: string): boolean {
+	return name === "run_commands" || name === "execute_command";
+}
+
+function commandResultOutput(result: unknown): string | undefined {
+	if (result && typeof result === "object" && !Array.isArray(result)) {
+		const output = (result as { output?: unknown }).output;
+		return typeof output === "string" ? output : undefined;
+	}
+	return undefined;
+}
 
 function isToolResultArray(value: unknown): value is ToolResultEntry[] {
 	return (
@@ -361,10 +378,15 @@ function expandToolEvent(toolEvent: ToolEvent): ExpandedToolEvent[] {
 			const title = query ? `${toolEvent.name}: ${query}` : toolEvent.name;
 			const state: ToolEvent["state"] =
 				entry.success === false ? "output-error" : toolEvent.state;
-			const output =
-				entry.result ?? (entry.success === false ? "(failed)" : "(no output)");
+			const fallback = entry.success === false ? "(failed)" : "(no output)";
+			const resultText = isCommandTool(toolEvent.name)
+				? commandResultOutput(entry.result) ?? fallback
+				: typeof entry.result === "string" && entry.result
+					? entry.result
+					: fallback;
+			const output = resultText;
 			const error =
-				entry.success === false ? (entry.result ?? "failed") : undefined;
+				entry.success === false ? (resultText === fallback ? "failed" : resultText) : undefined;
 			return {
 				id: `${toolEvent.id}-${index}`,
 				name: toolEvent.name,

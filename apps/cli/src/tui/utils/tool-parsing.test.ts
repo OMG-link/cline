@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildReadFilesKeys, parseReadFilesInput } from "./tool-parsing";
+import { buildReadFilesKeys, extractFullOutputText, parseReadFilesInput } from "./tool-parsing";
 
 describe("buildReadFilesKeys", () => {
 	it("produces unique keys when the same path is read twice", () => {
@@ -30,5 +30,27 @@ describe("buildReadFilesKeys", () => {
 
 	it("returns no keys for an empty list", () => {
 		expect(buildReadFilesKeys([])).toEqual([]);
+	});
+});
+
+describe("extractFullOutputText", () => {
+	it("extracts output from CommandExecutionResult objects", () => {
+		expect(
+			extractFullOutputText(
+				[
+					{ result: { output: "build ok", exitCode: 0, status: "completed" } },
+				],
+				"run_commands",
+			),
+		).toBe("build ok");
+	});
+
+	it("extracts output string from plain string results", () => {
+		expect(extractFullOutputText([{ result: "plain output" }])).toBe("plain output");
+	});
+
+	it("handles null/undefined", () => {
+		expect(extractFullOutputText(null)).toBeUndefined();
+		expect(extractFullOutputText(undefined)).toBeUndefined();
 	});
 });

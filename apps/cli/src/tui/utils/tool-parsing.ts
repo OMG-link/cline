@@ -1,4 +1,5 @@
 import { basename, extname } from "node:path";
+import { isCommandTool } from "@cline/shared";
 import { hunkHeader } from "./diff";
 
 const EXT_TO_LANGUAGE: Record<string, string> = {
@@ -185,7 +186,7 @@ export function parseSpawnAgentInput(
 	return { task: input.task };
 }
 
-export function extractFullOutputText(raw: unknown): string | undefined {
+export function extractFullOutputText(raw: unknown, toolName?: string): string | undefined {
 	if (raw === null || raw === undefined) return undefined;
 	if (typeof raw === "string") return raw;
 
@@ -196,6 +197,13 @@ export function extractFullOutputText(raw: unknown): string | undefined {
 				const result = item.result;
 				if (typeof result === "string") {
 					parts.push(result);
+				} else if (
+					isCommandTool(toolName) &&
+					typeof result === "object" &&
+					result !== null &&
+					typeof (result as { output: unknown }).output === "string"
+				) {
+					parts.push((result as { output: string }).output);
 				} else if (Array.isArray(result)) {
 					for (const part of result) {
 						if (

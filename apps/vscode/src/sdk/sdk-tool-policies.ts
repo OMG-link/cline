@@ -1,4 +1,5 @@
 import type { AutoApprovalSettings } from "@shared/AutoApprovalSettings"
+import { isCommandTool } from "@cline/shared"
 import type { McpHub } from "@/services/mcp/McpHub"
 
 /**
@@ -94,10 +95,6 @@ function isReadTool(toolName: string): boolean {
 
 export function isEditTool(toolName: string): boolean {
 	return ["editor", "replace_in_file", "write_to_file", "apply_patch", "delete_file"].includes(toolName)
-}
-
-function isCommandTool(toolName: string): boolean {
-	return toolName === "run_commands" || toolName === "execute_command"
 }
 
 function isBrowserTool(toolName: string): boolean {

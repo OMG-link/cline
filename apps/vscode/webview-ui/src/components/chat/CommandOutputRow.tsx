@@ -1,7 +1,7 @@
 import { COMMAND_OUTPUT_STRING, COMMAND_REQ_APP_STRING } from "@shared/combineCommandSequences"
-import { ClineMessage } from "@shared/ExtensionMessage"
+import { ClineMessage, COMMAND_STATUS, CommandState, CommandStateStatus } from "@shared/ExtensionMessage"
 import { StringRequest } from "@shared/proto/cline/common"
-import { memo, useEffect, useRef } from "react"
+import { memo, useEffect, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { FileServiceClient } from "@/services/grpc-client"
@@ -117,9 +117,6 @@ CommandOutputContent.displayName = "CommandOutputContent"
 export const CommandOutputRow = memo(
 	({
 		message,
-		isCommandExecuting = false,
-		isCommandPending = false,
-		isCommandCompleted = false,
 		isBackgroundExec = false, // vscodeTerminalExecutionMode === "backgroundExec"
 		onCancelCommand,
 		icon,
@@ -127,11 +124,11 @@ export const CommandOutputRow = memo(
 		isOutputFullyExpanded,
 		setIsOutputFullyExpanded,
 		onOutputChange,
+		commandStates,
+		commandTimeoutMs,
+		legacyCommandCompleted = false,
 	}: {
 		message: ClineMessage
-		isCommandExecuting?: boolean
-		isCommandPending?: boolean
-		isCommandCompleted?: boolean
 		isBackgroundExec?: boolean
 		onCancelCommand?: () => void
 		icon?: JSX.Element | null
@@ -139,6 +136,9 @@ export const CommandOutputRow = memo(
 		isOutputFullyExpanded: boolean
 		setIsOutputFullyExpanded: (expanded: boolean) => void
 		onOutputChange?: () => void
+		commandStates?: CommandState[]
+		commandTimeoutMs?: number
+		legacyCommandCompleted?: boolean
 	}) => {
 		const splitMessage = (text: string) => {
 			const outputIndex = text.indexOf(COMMAND_OUTPUT_STRING)
@@ -173,8 +173,46 @@ export const CommandOutputRow = memo(
 
 		const requestsApproval = rawCommand.endsWith(COMMAND_REQ_APP_STRING)
 		const command = requestsApproval ? rawCommand.slice(0, -COMMAND_REQ_APP_STRING.length) : rawCommand
+
+		const displayStatus = commandStates?.length
+			? aggregateDisplayStatus(commandStates)
+			: legacyCommandCompleted
+				? { label: "Completed", color: "description" }
+				: { label: "Running", color: "success" }
+
+		const anyRunning = commandStates?.some((cs) => cs.status === COMMAND_STATUS.RUNNING) ?? false
+		const firstStartedAt = commandStates?.find((cs) => cs.startedAt)?.startedAt
+		const [elapsedMs, setElapsedMs] = useState(0)
+
+		useEffect(() => {
+			if (!anyRunning || !firstStartedAt) return
+			const update = () => setElapsedMs(Date.now() - firstStartedAt)
+			update()
+			const interval = setInterval(update, 1000)
+			return () => clearInterval(interval)
+		}, [anyRunning, firstStartedAt])
+
+		const isOvertime = anyRunning && commandTimeoutMs != null && elapsedMs >= commandTimeoutMs
+		// Display duration: take the longest running time among parallel commands,
+		// monotonically non-decreasing. Terminal commands use backend duration;
+		// still-running commands use real-time elapsed (Date.now() - startedAt),
+		// so that partially completed commands still reflect the progress of remaining running commands without freezing.
+		const candidateDurations =
+			commandStates?.map((cs) => {
+				if (cs.duration != null) return cs.duration
+				if (cs.status === COMMAND_STATUS.RUNNING && cs.startedAt != null) return Date.now() - cs.startedAt
+				return 0
+			}) ?? []
+		const displayDurationMs = candidateDurations.length > 0 ? Math.max(...candidateDurations) : elapsedMs
+		// Frontend local timeout detection: still showing running but over budget
+		// -> display as Timeout (no suffix), then switch to Timeout(killed)/Timeout(detached)
+		const effectiveDisplayStatus = isOvertime
+			? { label: "Timeout", color: "error" }
+			: displayStatus
 		const showCancelButton =
-			(isCommandExecuting || isCommandPending) && typeof onCancelCommand === "function" && isBackgroundExec
+			(anyRunning || commandStates?.some((cs) => cs.status === COMMAND_STATUS.PENDING)) &&
+			typeof onCancelCommand === "function" &&
+			isBackgroundExec
 
 		const commandHeader = (
 			<div className="flex items-center gap-2.5 mb-3">
@@ -196,16 +234,23 @@ export const CommandOutputRow = memo(
 							<div className="flex items-center gap-2 flex-1 m-w-0">
 								<div
 									className={cn("bg-description rounded-full w-2 h-2 shrink-0", {
-										"bg-success animate-pulse": isCommandExecuting,
-										"bg-editor-warning-foreground": isCommandPending,
+										"bg-success animate-pulse": effectiveDisplayStatus.color === "success",
+										"bg-editor-warning-foreground": effectiveDisplayStatus.color === "warning",
+										"bg-error": effectiveDisplayStatus.color === "error",
 									})}
 								/>
 								<span
 									className={cn("text-description font-medium text-base shrink-0", {
-										"text-success": isCommandExecuting,
-										"text-editor-warning-foreground": isCommandPending,
+										"text-success": effectiveDisplayStatus.color === "success",
+										"text-editor-warning-foreground": effectiveDisplayStatus.color === "warning",
+										"text-error": effectiveDisplayStatus.color === "error",
 									})}>
-									{getCommandStatusText(isCommandExecuting, isCommandPending, isCommandCompleted)}
+									{effectiveDisplayStatus.label}
+									{commandTimeoutMs != null && (
+										<span className="text-description ml-1">
+											{formatTime(displayDurationMs)}/{formatTime(commandTimeoutMs)}
+										</span>
+									)}
 								</span>
 							</div>
 							<div className="flex items-center gap-2 shrink-0">
@@ -222,7 +267,7 @@ export const CommandOutputRow = memo(
 												)
 											}
 										}}
-										size="sm"
+										size="xs"
 										variant="secondary">
 										{isBackgroundExec ? "cancel" : "stop"}
 									</Button>
@@ -258,22 +303,53 @@ export const CommandOutputRow = memo(
 
 CommandOutputRow.displayName = "CommandOutputRow"
 
-const CommandStatusMap = {
-	executing: "Running",
-	pending: "Pending",
-	completed: "Completed",
-	skipped: "Skipped",
+interface DisplayStatus {
+	label: string
+	color: "success" | "warning" | "error" | "description"
 }
 
-function getCommandStatusText(isExecuting: boolean, isPending: boolean, isCompleted: boolean): string {
-	if (isExecuting) {
-		return CommandStatusMap.executing
-	}
-	if (isPending) {
-		return CommandStatusMap.pending
-	}
-	if (isCompleted) {
-		return CommandStatusMap.completed
-	}
-	return CommandStatusMap.skipped
+/**
+ * Aggregate per-command states into a single status label for the one-row UI.
+ *
+ * The status bar renders a single label per command row; per-command states
+ * are preserved in `commandStates` for a future expanded-view chip layout.
+ *
+ * Priority (high -> low):
+ *   running > rejected > cancelled > unknown > failed > [timeout_killed, timeout_detached, detached] > completed > pending
+ *
+ * Note: the failed / timeout / completed branches are gated by `allTerminal`
+ * (every command in the batch has reached a terminal state). The earlier
+ * branches (running, rejected, cancelled, unknown) fire unconditionally
+ * regardless of whether other commands are still non-terminal. This means
+ * a batch like [unknown, failed] returns "Unknown", not "Failed", because
+ * the `has(UNKNOWN)` check precedes the `allTerminal && has(FAILED)` check.
+ *
+ * cancelled is excluded from allTerminal because it is a user-intent state,
+ * not an execution outcome. A batch mixing cancelled + failed shows
+ * "Cancelled" (user chose to abort, results are irrelevant).
+ */
+export function aggregateDisplayStatus(states: CommandState[]): DisplayStatus {
+	const has = (s: CommandStateStatus) => states.some((cs) => cs.status === s)
+	const allTerminal = states.every((cs) =>
+		([COMMAND_STATUS.COMPLETED, COMMAND_STATUS.TIMEOUT_KILLED, COMMAND_STATUS.TIMEOUT_DETACHED, COMMAND_STATUS.DETACHED, COMMAND_STATUS.REJECTED, COMMAND_STATUS.FAILED] as CommandStateStatus[]).includes(cs.status),
+	)
+
+	if (has(COMMAND_STATUS.RUNNING)) return { label: "Running", color: "success" }
+	if (has(COMMAND_STATUS.REJECTED)) return { label: "Rejected", color: "description" }
+	if (has(COMMAND_STATUS.CANCELLED)) return { label: "Cancelled", color: "description" }
+	if (has(COMMAND_STATUS.UNKNOWN)) return { label: "Unknown", color: "description" }
+	if (allTerminal && has(COMMAND_STATUS.FAILED)) return { label: "Failed", color: "error" }
+	if (allTerminal && has(COMMAND_STATUS.TIMEOUT_KILLED)) return { label: "Timeout(killed)", color: "error" }
+	if (allTerminal && has(COMMAND_STATUS.TIMEOUT_DETACHED)) return { label: "Timeout(detached)", color: "error" }
+	if (allTerminal && has(COMMAND_STATUS.DETACHED)) return { label: "Detached", color: "description" }
+	if (allTerminal) return { label: "Completed", color: "description" }
+	if (states.every((cs) => cs.status === COMMAND_STATUS.PENDING)) return { label: "Pending", color: "warning" }
+	return { label: "Running", color: "success" }
+}
+
+function formatTime(ms: number): string {
+	const totalSeconds = Math.floor(ms / 1000)
+	const minutes = Math.floor(totalSeconds / 60)
+	const seconds = totalSeconds % 60
+	return `${minutes}:${seconds.toString().padStart(2, "0")}`
 }

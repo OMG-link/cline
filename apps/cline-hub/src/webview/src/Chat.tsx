@@ -1,5 +1,6 @@
 "use client";
 
+import { isCommandTool } from "@cline/shared";
 import {
 	CheckIcon,
 	GitBranchIcon,
@@ -326,9 +327,17 @@ function appendReasoningDelta(
 
 type ToolResultEntry = {
 	query?: string;
-	result?: string;
+	result?: unknown;
 	success?: boolean;
 };
+
+function commandResultOutput(result: unknown): string | undefined {
+	if (result && typeof result === "object" && !Array.isArray(result)) {
+		const output = (result as { output?: unknown }).output;
+		return typeof output === "string" ? output : undefined;
+	}
+	return undefined;
+}
 
 function isToolResultArray(value: unknown): value is ToolResultEntry[] {
 	return (
@@ -383,10 +392,15 @@ function expandToolEvent(toolEvent: ToolEvent): ExpandedToolEvent[] {
 			const title = query ? `${toolEvent.name}: ${query}` : toolEvent.name;
 			const state: ToolEvent["state"] =
 				entry.success === false ? "output-error" : toolEvent.state;
-			const output =
-				entry.result ?? (entry.success === false ? "(failed)" : "(no output)");
+			const fallback = entry.success === false ? "(failed)" : "(no output)";
+			const resultText = isCommandTool(toolEvent.name)
+				? commandResultOutput(entry.result) ?? fallback
+				: typeof entry.result === "string" && entry.result
+					? entry.result
+					: fallback;
+			const output = resultText;
 			const error =
-				entry.success === false ? (entry.result ?? "failed") : undefined;
+				entry.success === false ? (resultText === fallback ? "failed" : resultText) : undefined;
 			return {
 				id: `${toolEvent.id}-${index}`,
 				name: toolEvent.name,

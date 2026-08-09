@@ -1,6 +1,7 @@
 import { act, render, waitFor } from "@testing-library/react"
 import { describe, expect, it, vi } from "vitest"
-import { CommandOutputContent } from "./CommandOutputRow"
+import { CommandOutputContent, aggregateDisplayStatus } from "./CommandOutputRow"
+import type { CommandState } from "@shared/ExtensionMessage"
 
 vi.mock("../common/CodeBlock", () => ({
 	default: ({ source }: { source: string }) => <pre>{source}</pre>,
@@ -75,5 +76,120 @@ describe("CommandOutputContent", () => {
 
 		await act(async () => {})
 		expect(onOutputChange).not.toHaveBeenCalled()
+	})
+})
+
+describe("aggregateDisplayStatus", () => {
+	const s = (status: CommandState["status"]): CommandState => ({ status })
+
+	it("returns Running when any command is running", () => {
+		expect(aggregateDisplayStatus([s("running"), s("completed")])).toEqual({
+			label: "Running",
+			color: "success",
+		})
+	})
+
+	it("returns Cancelled when any cancelled and none running", () => {
+		expect(aggregateDisplayStatus([s("cancelled"), s("completed")])).toEqual({
+			label: "Cancelled",
+			color: "description",
+		})
+	})
+
+	it("returns Unknown when any unknown and none running/cancelled", () => {
+		expect(aggregateDisplayStatus([s("unknown"), s("completed")])).toEqual({
+			label: "Unknown",
+			color: "description",
+		})
+	})
+
+	it("returns Failed when all terminal and any failed", () => {
+		expect(aggregateDisplayStatus([s("failed"), s("completed")])).toEqual({
+			label: "Failed",
+			color: "error",
+		})
+	})
+
+	it("returns Timeout(killed) when all terminal and any timeout_killed", () => {
+		expect(aggregateDisplayStatus([s("timeout_killed"), s("completed")])).toEqual({
+			label: "Timeout(killed)",
+			color: "error",
+		})
+	})
+
+	it("returns Timeout(detached) when all terminal and any timeout_detached", () => {
+		expect(aggregateDisplayStatus([s("timeout_detached"), s("completed")])).toEqual({
+			label: "Timeout(detached)",
+			color: "error",
+		})
+	})
+
+	it("returns Detached when all terminal and any detached", () => {
+		expect(aggregateDisplayStatus([s("detached"), s("completed")])).toEqual({
+			label: "Detached",
+			color: "description",
+		})
+	})
+
+	it("returns Completed when all terminal and none of the above", () => {
+		expect(aggregateDisplayStatus([s("completed"), s("completed")])).toEqual({
+			label: "Completed",
+			color: "description",
+		})
+	})
+
+	it("returns Pending when all pending", () => {
+		expect(aggregateDisplayStatus([s("pending"), s("pending")])).toEqual({
+			label: "Pending",
+			color: "warning",
+		})
+	})
+
+	it("returns Running as default for mixed non-terminal", () => {
+		expect(aggregateDisplayStatus([s("pending"), s("completed")])).toEqual({
+			label: "Running",
+			color: "success",
+		})
+	})
+
+	it("prioritizes running over cancelled", () => {
+		expect(aggregateDisplayStatus([s("running"), s("cancelled")])).toEqual({
+			label: "Running",
+			color: "success",
+		})
+	})
+
+	it("returns Rejected when any rejected and none running", () => {
+		expect(aggregateDisplayStatus([s("rejected"), s("completed")])).toEqual({
+			label: "Rejected",
+			color: "description",
+		})
+	})
+
+	it("prioritizes running over rejected", () => {
+		expect(aggregateDisplayStatus([s("running"), s("rejected")])).toEqual({
+			label: "Running",
+			color: "success",
+		})
+	})
+
+	it("prioritizes cancelled over unknown", () => {
+		expect(aggregateDisplayStatus([s("cancelled"), s("unknown")])).toEqual({
+			label: "Cancelled",
+			color: "description",
+		})
+	})
+
+	it("returns Unknown when mixing unknown with terminal states (unknown is not terminal)", () => {
+		// unknown is not in the allTerminal set, so allTerminal is false;
+		// has(UNKNOWN) fires unconditionally before the allTerminal-gated branches
+		expect(aggregateDisplayStatus([s("unknown"), s("failed")])).toEqual({
+			label: "Unknown",
+			color: "description",
+		})
+		expect(aggregateDisplayStatus([s("unknown"), s("timeout_killed")])).toEqual({
+			label: "Unknown",
+			color: "description",
+		})
 	})
 })

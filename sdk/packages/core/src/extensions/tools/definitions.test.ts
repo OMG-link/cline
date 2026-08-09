@@ -597,8 +597,9 @@ describe("default run_commands tool", () => {
 		expect(result).toEqual([
 			{
 				query: "ls",
-				result: "ran:ls",
+				result: { output: "ran:ls", exitCode: 0, status: "completed", timeoutMs: 30000 },
 				success: true,
+				duration: expect.any(Number),
 			},
 		]);
 		expect(execute).toHaveBeenCalledTimes(1);
@@ -674,8 +675,9 @@ describe("default run_commands tool", () => {
 		expect(result).toEqual([
 			{
 				query: "node -e console.log('ok')",
-				result: "ran:node:-e,console.log('ok')",
+				result: { output: "ran:node:-e,console.log('ok')", exitCode: 0, status: "completed", timeoutMs: 30000 },
 				success: true,
+				duration: expect.any(Number),
 			},
 		]);
 		expect(execute).toHaveBeenCalledWith(
@@ -714,11 +716,17 @@ describe("default run_commands tool", () => {
 		);
 
 		expect(result).toEqual([
-			{ query: "pwd", result: "ran:pwd", success: true },
+			{
+				query: "pwd",
+				result: { output: "ran:pwd", exitCode: 0, status: "completed", timeoutMs: 30000 },
+				success: true,
+				duration: expect.any(Number),
+			},
 			{
 				query: "node --version",
-				result: "ran:node:--version",
+				result: { output: "ran:node:--version", exitCode: 0, status: "completed", timeoutMs: 30000 },
 				success: true,
+				duration: expect.any(Number),
 			},
 		]);
 		expect(execute).toHaveBeenNthCalledWith(
@@ -772,8 +780,9 @@ describe("default run_commands tool", () => {
 		expect(result).toEqual([
 			{
 				query: "git status --short",
-				result: "ran:git:status,--short",
+				result: { output: "ran:git:status,--short", exitCode: 0, status: "completed", timeoutMs: 30000 },
 				success: true,
+				duration: expect.any(Number),
 			},
 		]);
 		expect(execute).toHaveBeenCalledWith(
@@ -807,8 +816,9 @@ describe("default run_commands tool", () => {
 		expect(result).toEqual([
 			{
 				query: "git status --short",
-				result: "ran:git status --short",
+				result: { output: "ran:git status --short", exitCode: 0, status: "completed", timeoutMs: 30000 },
 				success: true,
+				duration: expect.any(Number),
 			},
 		]);
 	});
@@ -834,9 +844,10 @@ describe("default run_commands tool", () => {
 		expect(result).toEqual([
 			{
 				query: "bun test",
-				result: "[Command exited with code 1]\nfailed assertion details",
+				result: { output: "[Command exited with code 1]\nfailed assertion details", exitCode: 1, status: "completed", timeoutMs: 30000 },
 				error: "Command exited with code 1",
 				success: false,
+				duration: expect.any(Number),
 			},
 		]);
 	});
@@ -877,7 +888,7 @@ describe("default run_commands tool", () => {
 		expect(result).toEqual([
 			expect.objectContaining({
 				query: expect.stringContaining("cd /app && python3"),
-				result: `ran:${expectedCommand}`,
+				result: expect.objectContaining({ output: `ran:${expectedCommand}` }),
 				success: true,
 			}),
 		]);
@@ -932,12 +943,12 @@ describe("default run_commands tool", () => {
 			undefined,
 		);
 		expect(result).toEqual([
-			expect.objectContaining({ query: "pwd", result: "ran:pwd" }),
+			expect.objectContaining({ query: "pwd", result: expect.objectContaining({ output: "ran:pwd" }) }),
 			expect.objectContaining({
 				query: expectedCommand,
-				result: `ran:${expectedCommand}`,
+				result: expect.objectContaining({ output: `ran:${expectedCommand}` }),
 			}),
-			expect.objectContaining({ query: "ls /app", result: "ran:ls /app" }),
+			expect.objectContaining({ query: "ls /app", result: expect.objectContaining({ output: "ran:ls /app" }) }),
 		]);
 	});
 
@@ -973,7 +984,7 @@ describe("default run_commands tool", () => {
 		expect(result).toEqual([
 			expect.objectContaining({
 				query: expectedCommand,
-				result: `ran:${expectedCommand}`,
+				result: expect.objectContaining({ output: `ran:${expectedCommand}` }),
 			}),
 		]);
 	});
@@ -997,8 +1008,8 @@ describe("default run_commands tool", () => {
 
 		expect(execute).toHaveBeenCalledTimes(2);
 		expect(result).toEqual([
-			expect.objectContaining({ query: "pwd", result: "ran:pwd" }),
-			expect.objectContaining({ query: "ls /app", result: "ran:ls /app" }),
+			expect.objectContaining({ query: "pwd", result: expect.objectContaining({ output: "ran:pwd" }) }),
+			expect.objectContaining({ query: "ls /app", result: expect.objectContaining({ output: "ran:ls /app" }) }),
 		]);
 	});
 
@@ -1048,11 +1059,11 @@ describe("default run_commands tool", () => {
 		expect(result).toEqual([
 			expect.objectContaining({
 				query: "cat << 'FOO'\nfoo body\nFOO",
-				result: `ran:${expectedFirstCommand}`,
+				result: expect.objectContaining({ output: `ran:${expectedFirstCommand}` }),
 			}),
 			expect.objectContaining({
 				query: "cat << 'BAR'\nbar body\nBAR",
-				result: `ran:${expectedSecondCommand}`,
+				result: expect.objectContaining({ output: `ran:${expectedSecondCommand}` }),
 			}),
 		]);
 	});
@@ -1078,11 +1089,11 @@ describe("default run_commands tool", () => {
 		expect(result).toEqual([
 			expect.objectContaining({
 				query: 'wc -c <<< "hello"',
-				result: 'ran:wc -c <<< "hello"',
+				result: expect.objectContaining({ output: 'ran:wc -c <<< "hello"' }),
 			}),
 			expect.objectContaining({
 				query: "hello",
-				result: "ran:hello",
+				result: expect.objectContaining({ output: "ran:hello" }),
 			}),
 		]);
 	});
@@ -1108,11 +1119,11 @@ describe("default run_commands tool", () => {
 		expect(result).toEqual([
 			expect.objectContaining({
 				query: "python3 << 'PYEOF'",
-				result: "ran:python3 << 'PYEOF'",
+				result: expect.objectContaining({ output: "ran:python3 << 'PYEOF'" }),
 			}),
 			expect.objectContaining({
 				query: "print('ok')",
-				result: "ran:print('ok')",
+				result: expect.objectContaining({ output: "ran:print('ok')" }),
 			}),
 		]);
 	});
@@ -1133,7 +1144,7 @@ describe("default run_commands tool", () => {
 				conversationId: "conv-1",
 				iteration: 1,
 			},
-		)) as Array<{ query: string; result: string; success: boolean }>;
+		)) as Array<{ query: string; result: { output: string }; success: boolean }>;
 
 		// The executor still receives the full command
 		expect(execute).toHaveBeenCalledWith(
@@ -1143,7 +1154,7 @@ describe("default run_commands tool", () => {
 			undefined,
 		);
 		expect(result[0].success).toBe(true);
-		expect(result[0].result).toBe(`ran:${command.length}`);
+		expect((result[0].result as { output: string }).output).toBe(`ran:${command.length}`);
 		// The provider-facing echo is bounded and self-describing
 		expect(result[0].query.length).toBeLessThan(
 			RUN_COMMAND_QUERY_PREVIEW_LIMIT + 100,
@@ -1489,6 +1500,149 @@ describe("default run_commands tool", () => {
 				{ agentId: "a", conversationId: "c", iteration: 1 },
 			),
 		).rejects.toThrow(/timeoutMs/);
+	});
+
+	it("emits started + completed lifecycle events on success", async () => {
+		const execute = vi.fn(async () => "ok");
+		const emitUpdate = vi.fn();
+		const tool = createShellTool(execute, { bashTimeoutMs: 50 });
+
+		await tool.execute({ commands: ["echo hi"] } as never, {
+			agentId: "a", conversationId: "c", iteration: 1, emitUpdate,
+		});
+
+		const events = emitUpdate.mock.calls.map((c) => c[0]);
+		expect(events).toHaveLength(2);
+		expect(events[0]).toMatchObject({ event: "started", commandIndex: 0, timeoutMs: 50 });
+		expect(events[1]).toMatchObject({ event: "completed", commandIndex: 0, exitCode: 0 });
+	});
+
+	it("emits timeout event on TimeoutError", async () => {
+		const execute = vi.fn(async () => { throw new TimeoutError("test", 5); });
+		const emitUpdate = vi.fn();
+		const tool = createShellTool(execute, { bashTimeoutMs: 50 });
+
+		await tool.execute({ commands: ["sleep"] } as never, {
+			agentId: "a", conversationId: "c", iteration: 1, emitUpdate,
+		});
+
+		const events = emitUpdate.mock.calls.map((c) => c[0]);
+		const timeoutEvent = events.find((e) => e.event === "timeout");
+		expect(timeoutEvent).toBeDefined();
+		expect(timeoutEvent).toMatchObject({ type: "killed", commandIndex: 0 });
+	});
+
+	it("emits cancelled event when signal aborts", async () => {
+		const execute = vi.fn((_cmd: string, _cwd: string, ctx: { signal?: AbortSignal }) =>
+			new Promise<string>((_, reject) => {
+				ctx.signal?.addEventListener("abort", () => reject(new Error("aborted")));
+			}));
+		const emitUpdate = vi.fn();
+		const tool = createShellTool(execute);
+		const ac = new AbortController();
+
+		const promise = tool.execute({ commands: ["sleep"] } as never, {
+			agentId: "a", conversationId: "c", iteration: 1, emitUpdate, signal: ac.signal,
+		});
+		ac.abort();
+		await promise;
+
+		const events = emitUpdate.mock.calls.map((c) => c[0]);
+		const cancelledEvent = events.find((e) => e.event === "cancelled");
+		expect(cancelledEvent).toBeDefined();
+		expect(cancelledEvent).toMatchObject({ commandIndex: 0 });
+	});
+
+	it("emits failed event on generic executor error", async () => {
+		const execute = vi.fn(async () => { throw new Error("boom"); });
+		const emitUpdate = vi.fn();
+		const tool = createShellTool(execute);
+
+		await tool.execute({ commands: ["fail"] } as never, {
+			agentId: "a", conversationId: "c", iteration: 1, emitUpdate,
+		});
+
+		const events = emitUpdate.mock.calls.map((c) => c[0]);
+		const failedEvent = events.find((e) => e.event === "failed");
+		expect(failedEvent).toBeDefined();
+		expect(failedEvent).toMatchObject({ commandIndex: 0, error: "boom" });
+	});
+
+	it("emits per-command events for parallel commands", async () => {
+		const execute = vi.fn(async (cmd: string | { command: string }) =>
+			typeof cmd === "string" ? `ran:${cmd}` : `ran:${cmd.command}`);
+		const emitUpdate = vi.fn();
+		const tool = createShellTool(execute);
+
+		await tool.execute({ commands: ["a", "b"] } as never, {
+			agentId: "a", conversationId: "c", iteration: 1, emitUpdate,
+		});
+
+		const events = emitUpdate.mock.calls.map((c) => c[0]);
+		// 2 started + 2 completed = 4 events
+		expect(events).toHaveLength(4);
+		expect(events.filter((e) => e.event === "started")).toHaveLength(2);
+		expect(events.filter((e) => e.event === "completed")).toHaveLength(2);
+		expect(events[0].commandIndex).toBe(0);
+		expect(events[1].commandIndex).toBe(1);
+	});
+
+	it("suppresses completed event and sets detached status when metadata.detached is true", async () => {
+		const execute = vi.fn(async (_cmd: string, _cwd: string, ctx: { metadata?: Record<string, unknown> }) => {
+			ctx.metadata!.detached = true;
+			ctx.metadata!.detachReason = "user";
+			return "partial output";
+		});
+		const emitUpdate = vi.fn();
+		const tool = createShellTool(execute);
+
+		const result = await tool.execute({ commands: ["dev server"] } as never, {
+			agentId: "a", conversationId: "c", iteration: 1, emitUpdate,
+		});
+
+		const events = emitUpdate.mock.calls.map((c) => c[0]);
+		// started event fires, but completed must NOT (detached suppresses it)
+		expect(events.filter((e) => e.event === "started")).toHaveLength(1);
+		expect(events.filter((e) => e.event === "completed")).toHaveLength(0);
+		// result carries detached status
+		expect(result[0].result).toMatchObject({ status: "detached" });
+	});
+
+	it("sets timeout_detached status when detached without user reason", async () => {
+		const execute = vi.fn(async (_cmd: string, _cwd: string, ctx: { metadata?: Record<string, unknown> }) => {
+			ctx.metadata!.detached = true;
+			// detachReason not "user" -> timeout_detached
+			return "partial";
+		});
+		const emitUpdate = vi.fn();
+		const tool = createShellTool(execute);
+
+		const result = await tool.execute({ commands: ["slow cmd"] } as never, {
+			agentId: "a", conversationId: "c", iteration: 1, emitUpdate,
+		});
+
+		const events = emitUpdate.mock.calls.map((c) => c[0]);
+		// started fires, completed is suppressed (detached)
+		expect(events.filter((e) => e.event === "started")).toHaveLength(1);
+		expect(events.filter((e) => e.event === "completed")).toHaveLength(0);
+		expect(result[0].result).toMatchObject({ status: "timeout_detached" });
+	});
+
+	it("emits completed with non-zero exitCode on CommandExitError", async () => {
+		const execute = vi.fn(async () => {
+			throw new CommandExitError(1, "build failed");
+		});
+		const emitUpdate = vi.fn();
+		const tool = createShellTool(execute);
+
+		await tool.execute({ commands: ["make"] } as never, {
+			agentId: "a", conversationId: "c", iteration: 1, emitUpdate,
+		});
+
+		const events = emitUpdate.mock.calls.map((c) => c[0]);
+		const completedEvent = events.find((e) => e.event === "completed");
+		expect(completedEvent).toBeDefined();
+		expect(completedEvent).toMatchObject({ exitCode: 1, commandIndex: 0 });
 	});
 });
 

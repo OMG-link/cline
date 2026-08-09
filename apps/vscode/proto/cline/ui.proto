@@ -200,6 +200,26 @@ message ClineModelInfo {
   string model_id = 2;
 }
 
+enum CommandStatus {
+  COMMAND_STATUS_UNSPECIFIED = 0;
+  COMMAND_STATUS_PENDING = 1;
+  COMMAND_STATUS_RUNNING = 2;
+  COMMAND_STATUS_COMPLETED = 3;
+  COMMAND_STATUS_TIMEOUT_KILLED = 4;
+  COMMAND_STATUS_TIMEOUT_DETACHED = 5;
+  COMMAND_STATUS_DETACHED = 6;
+  COMMAND_STATUS_CANCELLED = 7;
+  COMMAND_STATUS_FAILED = 8;
+  COMMAND_STATUS_REJECTED = 9;
+}
+
+message CommandState {
+  CommandStatus status = 1;
+  int32 exit_code = 2;
+  int64 duration = 3;
+  int64 started_at = 4;
+}
+
 // Main ClineMessage type
 message ClineMessage {
   int64 ts = 1;
@@ -233,6 +253,10 @@ message ClineMessage {
   // epoch = conversation/replica fence (older epoch is dropped by the webview)
   int64 seq = 24;
   int64 epoch = 25;
+
+  // Command status bar fields
+  repeated CommandState command_states = 26;
+  int64 command_timeout_ms = 27;
 }
 
 message ShowWebviewEvent {

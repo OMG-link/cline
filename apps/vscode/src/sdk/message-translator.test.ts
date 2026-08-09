@@ -2009,7 +2009,7 @@ describe("translateSessionEvent — agent_event notice", () => {
 // ---------------------------------------------------------------------------
 
 describe("translateSessionEvent — agent_event content_update", () => {
-	it("skips tool content_update (webview uses content_start partial until content_end)", () => {
+	it("skips tool content_update for non-command tools", () => {
 		const state = new MessageTranslatorState()
 		const event: CoreSessionEvent = {
 			type: "agent_event",
@@ -2018,18 +2018,333 @@ describe("translateSessionEvent — agent_event content_update", () => {
 				event: {
 					type: "content_update",
 					contentType: "tool",
-					toolName: "execute_command",
+					toolName: "read_files",
 					toolCallId: "call-1",
-					update: "Running npm install...",
+					update: "Reading file...",
 				} as AgentEvent,
 			},
 		}
 
-		// content_update is intentionally not forwarded to the webview —
+		// content_update for non-command tools is intentionally not forwarded —
 		// the content_start message with partial=true is sufficient until
 		// content_end finalizes it. This avoids flooding the webview.
 		const result = translateSessionEvent(event, state)
 		expect(result.messages).toHaveLength(0)
+	})
+
+	it("handles run_commands content_update started event", () => {
+		const state = new MessageTranslatorState()
+		// Seed the commandStates via content_start
+		translateSessionEvent(
+			{
+				type: "agent_event",
+				payload: {
+					sessionId: "s1",
+					event: {
+						type: "content_start",
+						contentType: "tool",
+						toolName: "run_commands",
+						toolCallId: "c1",
+						input: { commands: ["npm test"] },
+					} as AgentEvent,
+				},
+			},
+			state,
+		)
+
+		const result = translateSessionEvent(
+			{
+				type: "agent_event",
+				payload: {
+					sessionId: "s1",
+					event: {
+						type: "content_update",
+						contentType: "tool",
+						toolName: "run_commands",
+						toolCallId: "c1",
+						update: { event: "started", commandIndex: 0, startedAt: 1000, timeoutMs: 300000 },
+					} as AgentEvent,
+				},
+			},
+			state,
+		)
+
+		expect(result.messages).toHaveLength(1)
+		const msg = result.messages[0]
+		expect(msg.say).toBe("command")
+		expect(msg.text).toBe("npm test")
+		expect(msg.commandStates?.[0]?.status).toBe("running")
+		expect(msg.commandStates?.[0]?.startedAt).toBe(1000)
+		expect(msg.commandTimeoutMs).toBe(300000)
+	})
+
+	it("protects terminal command state from being overwritten by completed", () => {
+		const state = new MessageTranslatorState()
+		translateSessionEvent(
+			{
+				type: "agent_event",
+				payload: {
+					sessionId: "s1",
+					event: {
+						type: "content_start",
+						contentType: "tool",
+						toolName: "run_commands",
+						toolCallId: "c1",
+						input: { commands: ["npm test"] },
+					} as AgentEvent,
+				},
+			},
+			state,
+		)
+
+		// Set a protected terminal state (timeout_detached)
+		translateSessionEvent(
+			{
+				type: "agent_event",
+				payload: {
+					sessionId: "s1",
+					event: {
+						type: "content_update",
+						contentType: "tool",
+						toolName: "run_commands",
+						toolCallId: "c1",
+						update: { event: "timeout", type: "detached", commandIndex: 0, duration: 300000 },
+					} as AgentEvent,
+				},
+			},
+			state,
+		)
+
+		// A later completed event must not overwrite the timeout_detached state
+		const result = translateSessionEvent(
+			{
+				type: "agent_event",
+				payload: {
+					sessionId: "s1",
+					event: {
+						type: "content_update",
+						contentType: "tool",
+						toolName: "run_commands",
+						toolCallId: "c1",
+						update: { event: "completed", commandIndex: 0, exitCode: 0, duration: 300000 },
+					} as AgentEvent,
+				},
+			},
+			state,
+		)
+
+		expect(result.messages).toHaveLength(1)
+		expect(result.messages[0].commandStates?.[0]?.status).toBe("timeout_detached")
+	})
+
+	it("writes completed state with exitCode and duration", () => {
+		const state = new MessageTranslatorState()
+		// Seed with content_start so commandStates are initialized
+		translateSessionEvent(
+			{
+				type: "agent_event",
+				payload: {
+					sessionId: "s1",
+					event: {
+						type: "content_start",
+						contentType: "tool",
+						toolName: "run_commands",
+						toolCallId: "c1",
+						input: { commands: ["npm test"] },
+					} as AgentEvent,
+				},
+			},
+			state,
+		)
+		// started
+		translateSessionEvent(
+			{
+				type: "agent_event",
+				payload: {
+					sessionId: "s1",
+					event: {
+						type: "content_update",
+						contentType: "tool",
+						toolName: "run_commands",
+						toolCallId: "c1",
+						update: { event: "started", commandIndex: 0, startedAt: 1000, timeoutMs: 300000 },
+					} as AgentEvent,
+				},
+			},
+			state,
+		)
+		// completed
+		const result = translateSessionEvent(
+			{
+				type: "agent_event",
+				payload: {
+					sessionId: "s1",
+					event: {
+						type: "content_update",
+						contentType: "tool",
+						toolName: "run_commands",
+						toolCallId: "c1",
+						update: { event: "completed", commandIndex: 0, exitCode: 0, duration: 5000 },
+					} as AgentEvent,
+				},
+			},
+			state,
+		)
+		expect(result.messages[0].commandStates?.[0]?.status).toBe("completed")
+		expect(result.messages[0].commandStates?.[0]?.exitCode).toBe(0)
+		expect(result.messages[0].commandStates?.[0]?.duration).toBe(5000)
+	})
+
+	it("writes timeout_killed state from killed timeout event", () => {
+		const state = new MessageTranslatorState()
+		translateSessionEvent(
+			{
+				type: "agent_event",
+				payload: {
+					sessionId: "s1",
+					event: {
+						type: "content_start",
+						contentType: "tool",
+						toolName: "run_commands",
+						toolCallId: "c1",
+						input: { commands: ["sleep 999"] },
+					} as AgentEvent,
+				},
+			},
+			state,
+		)
+		const result = translateSessionEvent(
+			{
+				type: "agent_event",
+				payload: {
+					sessionId: "s1",
+					event: {
+						type: "content_update",
+						contentType: "tool",
+						toolName: "run_commands",
+						toolCallId: "c1",
+						update: { event: "timeout", type: "killed", commandIndex: 0, duration: 30000 },
+					} as AgentEvent,
+				},
+			},
+			state,
+		)
+		expect(result.messages[0].commandStates?.[0]?.status).toBe("timeout_killed")
+		expect(result.messages[0].commandStates?.[0]?.duration).toBe(30000)
+	})
+
+	it("writes detached state from user-initiated detach event", () => {
+		const state = new MessageTranslatorState()
+		translateSessionEvent(
+			{
+				type: "agent_event",
+				payload: {
+					sessionId: "s1",
+					event: {
+						type: "content_start",
+						contentType: "tool",
+						toolName: "run_commands",
+						toolCallId: "c1",
+						input: { commands: ["dev server"] },
+					} as AgentEvent,
+				},
+			},
+			state,
+		)
+		const result = translateSessionEvent(
+			{
+				type: "agent_event",
+				payload: {
+					sessionId: "s1",
+					event: {
+						type: "content_update",
+						contentType: "tool",
+						toolName: "run_commands",
+						toolCallId: "c1",
+						update: { event: "detached", commandIndex: 0, duration: 5000 },
+					} as AgentEvent,
+				},
+			},
+			state,
+		)
+		expect(result.messages[0].commandStates?.[0]?.status).toBe("detached")
+		expect(result.messages[0].commandStates?.[0]?.duration).toBe(5000)
+	})
+
+	it("writes cancelled state from cancel event", () => {
+		const state = new MessageTranslatorState()
+		translateSessionEvent(
+			{
+				type: "agent_event",
+				payload: {
+					sessionId: "s1",
+					event: {
+						type: "content_start",
+						contentType: "tool",
+						toolName: "run_commands",
+						toolCallId: "c1",
+						input: { commands: ["long build"] },
+					} as AgentEvent,
+				},
+			},
+			state,
+		)
+		const result = translateSessionEvent(
+			{
+				type: "agent_event",
+				payload: {
+					sessionId: "s1",
+					event: {
+						type: "content_update",
+						contentType: "tool",
+						toolName: "run_commands",
+						toolCallId: "c1",
+						update: { event: "cancelled", commandIndex: 0, duration: 2000 },
+					} as AgentEvent,
+				},
+			},
+			state,
+		)
+		expect(result.messages[0].commandStates?.[0]?.status).toBe("cancelled")
+		expect(result.messages[0].commandStates?.[0]?.duration).toBe(2000)
+	})
+
+	it("writes failed state from fail event", () => {
+		const state = new MessageTranslatorState()
+		translateSessionEvent(
+			{
+				type: "agent_event",
+				payload: {
+					sessionId: "s1",
+					event: {
+						type: "content_start",
+						contentType: "tool",
+						toolName: "run_commands",
+						toolCallId: "c1",
+						input: { commands: ["bad cmd"] },
+					} as AgentEvent,
+				},
+			},
+			state,
+		)
+		const result = translateSessionEvent(
+			{
+				type: "agent_event",
+				payload: {
+					sessionId: "s1",
+					event: {
+						type: "content_update",
+						contentType: "tool",
+						toolName: "run_commands",
+						toolCallId: "c1",
+						update: { event: "failed", commandIndex: 0, error: "ENOENT", duration: 100 },
+					} as AgentEvent,
+				},
+			},
+			state,
+		)
+		expect(result.messages[0].commandStates?.[0]?.status).toBe("failed")
+		expect(result.messages[0].commandStates?.[0]?.duration).toBe(100)
 	})
 })
 
@@ -2528,6 +2843,41 @@ describe("translateSessionEvent — accumulated text streaming (S6-21 fix)", () 
 
 			const msg = result.messages[0]
 			expect(msg.text).toContain("Error: command not found")
+		})
+
+		it("emits rejected commandStates when tool approval is denied", () => {
+			const state = new MessageTranslatorState()
+			// Simulate approval denial being recorded with the ask message ts and
+			// tool input (mirrors what SdkInteractionCoordinator passes)
+			const askTs = state.nextTs()
+			state.recordDeniedToolApproval("c4", "run_commands", "user rejected", askTs, {
+				commands: ["npm test"],
+			})
+
+			// content_end with denial (content_start was skipped because the
+			// approval was denied before streaming began)
+			const result = translateSessionEvent(
+				{
+					type: "agent_event",
+					payload: {
+						sessionId: "s1",
+						event: {
+							type: "content_end",
+							contentType: "tool",
+							toolName: "run_commands",
+							toolCallId: "c4",
+						} as AgentEvent,
+					},
+				},
+				state,
+			)
+
+			const msg = result.messages.find((m) => m.say === "command")
+			expect(msg).toBeDefined()
+			expect(msg?.ts).toBe(askTs) // reuses the ask ts so messageReducer upserts in place
+			expect(msg?.commandCompleted).toBe(true)
+			expect(msg?.commandStates).toEqual([{ status: "rejected" }])
+			expect(msg?.text).toContain("npm test") // text comes from the denial-recorded input
 		})
 	})
 })
@@ -3925,5 +4275,60 @@ describe("tool display paths are relativized to the cwd", () => {
 		const toolMessage = clineMessages.find((m) => m.say === "tool")
 		expect(toolMessage).toBeDefined()
 		expect(parseTool(toolMessage?.text).path).toBe("src/index.ts")
+	})
+
+	it("shows cancelled for old-format history (no structured ToolOperationResult)", () => {
+		// Old-format history: tool_result content is plain text, not ToolOperationResult[]
+		const messages: SdkMessage[] = [
+			{
+				role: "assistant",
+				content: [{ type: "tool_use", id: "t1", name: "run_commands", input: { commands: ["npm test"] } }],
+			} as SdkMessage,
+			{
+				role: "user",
+				content: [
+					{
+						type: "tool_result",
+						tool_use_id: "t1",
+						name: "run_commands",
+						content: "All tests passed",
+					},
+				],
+			} as SdkMessage,
+		]
+		const clineMessages = sdkMessagesToClineMessages(messages, undefined, { cwd: CWD })
+		const cmdMessage = clineMessages.find((m) => m.say === "command")
+		expect(cmdMessage?.commandCompleted).toBe(true)
+		expect(cmdMessage?.commandStates).toEqual([{ status: "cancelled" }])
+	})
+
+	it("restores per-command terminal states from structured history ToolOperationResult", () => {
+		const messages: SdkMessage[] = [
+			{
+				role: "assistant",
+				content: [{ type: "tool_use", id: "t1", name: "run_commands", input: { commands: ["a && b"] } }],
+			} as SdkMessage,
+			{
+				role: "user",
+				content: [
+					{
+						type: "tool_result",
+						tool_use_id: "t1",
+						name: "run_commands",
+						content: [
+							{ query: "a", result: { output: "ok", exitCode: 0, status: "completed", timeoutMs: 300000 }, success: true, duration: 1000 },
+							{ query: "b", result: { output: "boom", exitCode: 1, status: "failed", timeoutMs: 300000 }, error: "failed", success: false, duration: 2000 },
+						],
+					},
+				],
+			} as unknown as SdkMessage,
+		]
+		const clineMessages = sdkMessagesToClineMessages(messages, undefined, { cwd: CWD })
+		const cmdMessage = clineMessages.find((m) => m.say === "command")
+		expect(cmdMessage?.commandStates).toEqual([
+			{ status: "completed", exitCode: 0, duration: 1000 },
+			{ status: "failed", exitCode: 1, duration: 2000 },
+		])
+		expect(cmdMessage?.commandTimeoutMs).toBe(300000)
 	})
 })

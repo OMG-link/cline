@@ -374,6 +374,25 @@ describe("format helpers", () => {
 		).toBe("first (+2 more)");
 		expect(formatToolOutput(null)).toBe("");
 	});
+
+	it("extracts output from CommandExecutionResult objects", () => {
+		expect(
+			formatToolOutput(
+				[
+					{ result: { output: "build succeeded", exitCode: 0, status: "completed" } },
+				],
+				"run_commands",
+			),
+		).toBe("build succeeded");
+		expect(
+			formatToolOutput(
+				[
+					{ result: { output: "", status: "timeout_killed" }, error: "Command timed out" },
+				],
+				"run_commands",
+			),
+		).toBe("");
+	});
 });
 
 describe("hook payload validation and audit logging", () => {

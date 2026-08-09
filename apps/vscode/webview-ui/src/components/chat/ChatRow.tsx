@@ -1,9 +1,9 @@
-import { COMMAND_OUTPUT_STRING } from "@shared/combineCommandSequences"
 import {
 	ClineApiReqInfo,
 	ClineAskQuestion,
 	ClineAskUseMcpServer,
 	ClineMessage,
+	COMMAND_STATUS,
 	ClinePlanModeResponse,
 	ClineSayTool,
 	COMPLETION_RESULT_CHANGES_FLAG,
@@ -176,13 +176,7 @@ export const ChatRowContent = memo(
 		const type = message.type === "ask" ? message.ask : message.say
 
 		const isCommandMessage = type === "command"
-		// Check if command has output to determine if it's actually executing
-		const commandHasOutput = message.text?.includes(COMMAND_OUTPUT_STRING) ?? false
-		// A command is executing if it has output but hasn't completed yet
-		const isCommandExecuting = isCommandMessage && !message.commandCompleted && commandHasOutput
-		// A command is pending if it hasn't started (no output) and hasn't completed
-		const isCommandPending = isCommandMessage && isLast && !message.commandCompleted && !commandHasOutput
-		const isCommandCompleted = isCommandMessage && message.commandCompleted === true
+		const isCommandRunning = isCommandMessage && message.commandStates?.some((cs) => cs.status === COMMAND_STATUS.RUNNING) === true
 
 		const isMcpServerResponding = isLast && lastModifiedMessage?.say === "mcp_server_request_started"
 
@@ -307,8 +301,7 @@ export const ChatRowContent = memo(
 			type,
 			cost,
 			apiRequestFailedMessage,
-			isCommandExecuting,
-			isCommandPending,
+			isCommandRunning,
 			apiReqCancelReason,
 			isMcpServerResponding,
 			message.text,
@@ -678,41 +671,36 @@ export const ChatRowContent = memo(
 
 		// Reset output expansion state when command stops (completes or is cancelled)
 		useEffect(() => {
-			// If command was executing and now isn't, clean up
-			if (isCommandMessage && prevCommandExecutingRef.current && !isCommandExecuting) {
+			if (isCommandMessage && prevCommandExecutingRef.current && !isCommandRunning) {
 				setIsOutputFullyExpanded(false)
 			}
-
-			// Update ref for next render
-			prevCommandExecutingRef.current = isCommandExecuting
-		}, [isCommandMessage, isCommandExecuting])
+			prevCommandExecutingRef.current = isCommandRunning
+		}, [isCommandMessage, isCommandRunning])
 
 		// Auto-expand when command starts executing (only if running > 500ms)
 		useEffect(() => {
-			if (isCommandMessage && isCommandExecuting && !isExpanded) {
-				// Wait 500ms before auto-expanding to avoid animating fast commands
+			if (isCommandMessage && isCommandRunning && !isExpanded) {
 				const timer = setTimeout(() => {
-					// Expand after 500ms
 					onToggleExpand(message.ts, { preserveAutoScroll: true })
 				}, 500)
 
 				return () => clearTimeout(timer)
 			}
-		}, [isCommandMessage, isCommandExecuting, isExpanded, onToggleExpand, message.ts])
+		}, [isCommandMessage, isCommandRunning, isExpanded, onToggleExpand, message.ts])
 
 		if (message.ask === "command" || message.say === "command") {
 			return (
 				<CommandOutputRow
 					icon={icon}
 					isBackgroundExec={vscodeTerminalExecutionMode === "backgroundExec"}
-					isCommandCompleted={isCommandCompleted}
-					isCommandExecuting={isCommandExecuting}
-					isCommandPending={isCommandPending}
 					isOutputFullyExpanded={isOutputFullyExpanded}
 					message={message}
 					onCancelCommand={onCancelCommand}
 					setIsOutputFullyExpanded={setIsOutputFullyExpanded}
 					title={title}
+					commandStates={message.commandStates}
+					commandTimeoutMs={message.commandTimeoutMs}
+					legacyCommandCompleted={message.commandCompleted === true}
 				/>
 			)
 		}

@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import process from "node:process";
+import { isCommandTool } from "@cline/shared";
 import type { ProviderSettingsUpdate } from "./types";
 
 export function readProviderSettingsUpdate(
@@ -91,7 +92,7 @@ export function formatClientLabel(clientType: string | undefined): string {
 		.join(" ");
 }
 
-export function stringifyContent(value: unknown): string {
+export function stringifyContent(value: unknown, toolName?: string): string {
 	if (typeof value === "string") return value;
 	if (Array.isArray(value)) {
 		return value
@@ -103,6 +104,9 @@ export function stringifyContent(value: unknown): string {
 						asString(record.text) ??
 						asString(record.content) ??
 						asString(record.result) ??
+						(isCommandTool(toolName)
+							? asString((record.result as { output?: unknown } | null)?.output)
+							: undefined) ??
 						""
 					);
 				}

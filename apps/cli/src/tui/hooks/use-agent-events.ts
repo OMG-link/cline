@@ -95,7 +95,7 @@ export function useAgentEventHandlers(deps: AgentEventDeps) {
 			const error = event.error ?? undefined;
 			const output = event.output;
 			const result = {
-				outputSummary: error ? "" : formatToolOutput(output),
+				outputSummary: error ? "" : formatToolOutput(output, event.toolName),
 				rawOutput: error ? undefined : output,
 				error,
 			};

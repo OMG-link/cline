@@ -544,6 +544,15 @@ export {
 } from "./storage/chat-workspace-paths";
 export * from "./team";
 export { createTool } from "./tools/create";
+export type {
+	CommandExecutionResult,
+	CommandStatusUpdate,
+} from "./tools/command-events";
+export {
+	COMMAND_TERMINAL_STATUSES,
+	PROTECTED_TERMINAL_STATUSES,
+	isCommandTool,
+} from "./tools/command-events";
 export * from "./types";
 export { AUTH_ERROR_PATTERNS, isLikelyAuthError } from "./types/auth";
 export { initVcr } from "./vcr";

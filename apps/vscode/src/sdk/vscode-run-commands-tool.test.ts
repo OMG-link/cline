@@ -66,7 +66,12 @@ describe("createVscodeRunCommandsTool", () => {
 		)
 
 		expect(getTerminalManager).toHaveBeenCalledOnce()
-		expect(results).toEqual([expect.objectContaining({ result: "terminal-default-ok", success: true })])
+		expect(results).toEqual([
+			expect.objectContaining({
+				result: expect.objectContaining({ output: "terminal-default-ok", status: "completed" }),
+				success: true,
+			}),
+		])
 	})
 
 	it("constructs a cmd tool from the stock array-valued Command Prompt profile", () => {
@@ -753,6 +758,88 @@ describe("executeForeground — Proceed While Running", () => {
 			}
 		})
 		fs.rmSync(logFilePath!, { force: true })
+	})
+
+	it("emits detach lifecycle event via emitUpdate when user detaches", async () => {
+		const coordinator = new SdkForegroundCommandCoordinator()
+		const { process, emitLine, complete } = createControllableTerminalProcess()
+		const emitUpdate = vi.fn()
+		const startedAt = Date.now()
+		const context = {
+			agentId: "a",
+			conversationId: "c",
+			iteration: 1,
+			emitUpdate,
+			metadata: { commandIndex: 2, startedAt } as Record<string, unknown>,
+		}
+		const resultPromise = executeForeground(
+			"devserver", "/workspace", createFakeTerminalManager(process), 100_000,
+			undefined, coordinator, undefined, undefined, context as any,
+		)
+
+		await waitFor(() => coordinator.isRunning)
+		await waitFor(() => process.listenerCount("line") > 0)
+		emitLine("listening on :3000")
+
+		expect(coordinator.proceedWhileRunning()).toBe(1)
+		await resultPromise
+
+		const events = emitUpdate.mock.calls.map((c) => c[0])
+		const detachEvent = events.find((e) => e.event === "detached")
+		expect(detachEvent).toBeDefined()
+		expect(detachEvent).toMatchObject({ commandIndex: 2 })
+		expect(detachEvent.duration).toBeGreaterThan(0)
+
+		// metadata flags should be set
+		expect(context.metadata.detached).toBe(true)
+		expect(context.metadata.detachReason).toBe("user")
+
+		const logFilePath = /redirected to this file[^:]*: (.+)$/m.exec(await resultPromise)?.[1]?.trim()
+		if (logFilePath) {
+			complete({ exitCode: 0 })
+			fs.rmSync(logFilePath, { force: true })
+		}
+	})
+
+	it("emits timeout-detached lifecycle event via emitUpdate on auto-proceed", async () => {
+		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] })
+		const coordinator = new SdkForegroundCommandCoordinator()
+		const { process, emitLine, complete } = createControllableTerminalProcess()
+		const emitUpdate = vi.fn()
+		const startedAt = Date.now()
+		const context = {
+			agentId: "a",
+			conversationId: "c",
+			iteration: 1,
+			emitUpdate,
+			metadata: { commandIndex: 0, startedAt } as Record<string, unknown>,
+		}
+		const resultPromise = executeForeground(
+			"devserver", "/workspace", createFakeTerminalManager(process), 100_000,
+			undefined, coordinator, undefined, 10_000, context as any,
+		)
+
+		await new Promise<void>((resolve) => setImmediate(resolve))
+		emitLine("listening on :3000")
+
+		await vi.advanceTimersByTimeAsync(10_001)
+		await resultPromise
+
+		const events = emitUpdate.mock.calls.map((c) => c[0])
+		const timeoutEvent = events.find((e) => e.event === "timeout")
+		expect(timeoutEvent).toBeDefined()
+		expect(timeoutEvent).toMatchObject({ type: "detached", commandIndex: 0 })
+		expect(timeoutEvent.duration).toBeGreaterThan(0)
+
+		expect(context.metadata.detached).toBe(true)
+		expect(context.metadata.detachReason).toBe("timeout")
+
+		vi.useRealTimers()
+		const logFilePath = /redirected to this file[^:]*: (.+)$/m.exec(await resultPromise)?.[1]?.trim()
+		if (logFilePath) {
+			complete({ exitCode: 0 })
+			fs.rmSync(logFilePath, { force: true })
+		}
 	})
 
 	it("detaches each parallel command into its own log file", async () => {
