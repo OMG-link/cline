@@ -360,11 +360,11 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
 			return
 		}
 		// Queueing is a deliberate send, so re-engage bottom pinning like handleSendMessage does.
-		scrollToBottom(true)
+		scrollToBottom(true, "ChatView queued prompt send")
 		// Settle with an instant scroll once the footer's layout change has landed.
 		setTimeout(() => {
 			if (getFollowing()) {
-				pinToBottom()
+				pinToBottom("ChatView settle after queued send")
 			}
 		}, 50)
 	}, [queuedPromptCount, taskTs, scrollToBottom, pinToBottom, getFollowing])

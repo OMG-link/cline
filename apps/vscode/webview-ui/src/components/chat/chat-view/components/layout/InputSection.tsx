@@ -66,7 +66,7 @@ export const InputSection: React.FC<InputSectionProps> = ({
 				onFocusChange={handleFocusChange}
 				onHeightChange={() => {
 					if (isAtBottom) {
-						pinToBottom()
+						pinToBottom("InputSection textarea height change")
 					}
 				}}
 				onSelectFilesAndImages={selectFilesAndImages}

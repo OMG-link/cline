@@ -87,12 +87,12 @@ export interface ScrollBehavior {
 	// event listeners) where a state snapshot would be stale.
 	getFollowing: () => boolean
 	// Cancels following and arms the fixed cancel-follow lock.
-	cancelFollowing: () => void
+	cancelFollowing: (reason?: string) => void
 	// Re-enables following (clears the cancel lock) and scrolls to the bottom.
-	scrollToBottom: (smooth?: boolean) => void
+	scrollToBottom: (smooth?: boolean, reason?: string) => void
 	// Following-gated scroll to the bottom; does not change following.
-	pinToBottom: () => void
-	scrollToMessage: (messageIndex: number) => void
+	pinToBottom: (reason?: string) => void
+	scrollToMessage: (messageIndex: number, reason?: string) => void
 	toggleRowExpansion: (ts: number, options?: { preserveAutoScroll?: boolean }) => void
 	isAtBottom: boolean
 	pendingScrollToMessage: number | null

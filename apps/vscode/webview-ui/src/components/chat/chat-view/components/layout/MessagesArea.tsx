@@ -84,11 +84,14 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 	// Handler to scroll to the scrolled past user message
 	const handleScrollToUserMessage = useCallback(() => {
 		if (scrollToMessage && scrolledPastUserMessageIndex >= 0) {
-			scrollToMessage(scrolledPastUserMessageIndex)
+			scrollToMessage(scrolledPastUserMessageIndex, "MessagesArea sticky user message click")
 		}
 	}, [scrollToMessage, scrolledPastUserMessageIndex])
 
-	const handleScrollToBottom = useCallback(() => scrollToBottom(true), [scrollToBottom])
+	const handleScrollToBottom = useCallback(
+		() => scrollToBottom(true, "MessagesArea scroll-to-bottom button"),
+		[scrollToBottom],
+	)
 
 	const { expandedRows, inputValue, setActiveQuote } = chatState
 	const lastVisibleRow = useMemo(() => groupedMessages.at(-1), [groupedMessages])
@@ -148,7 +151,7 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 		prevPhaseForStreamingRef.current = turnState?.phase
 		if (turnState?.phase === "streaming" && prevPhase !== "streaming") {
 			turnStartTailTsRef.current = clineMessagesRef.current.at(-1)?.ts
-			scrollToBottom(true)
+			scrollToBottom(true, "MessagesArea turn start (streaming began)")
 		}
 	}, [turnState?.phase, scrollToBottom])
 
@@ -181,9 +184,9 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 		// Suppress the pin while scrolling to the summary, so it can't fight the
 		// navigation. cancelFollowing arms the fixed cancel lock, which also blocks
 		// tryResumeFollow from re-enabling during the scroll.
-		cancelFollowing()
+		cancelFollowing("MessagesArea turn-end scroll-to-summary")
 		scrolledSummaryTsRef.current = target.ts
-		scrollToMessage(targetIndex)
+		scrollToMessage(targetIndex, "MessagesArea turn-end scroll-to-summary")
 	}, [turnState?.phase, getFollowing, cancelFollowing, scrollToMessage])
 
 	const itemContent = useMemo(

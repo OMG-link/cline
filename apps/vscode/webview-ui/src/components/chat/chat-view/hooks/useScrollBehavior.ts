@@ -34,8 +34,9 @@ export function useScrollBehavior(
 	// entry point that keeps both in sync.
 	const [isFollowing, setIsFollowing] = useState(true)
 	const followingRef = useRef(true)
-	const setFollowing = useCallback((next: boolean) => {
+	const setFollowing = useCallback((next: boolean, reason: string) => {
 		if (followingRef.current === next) return
+		console.log(`[FollowDebug] following: ${followingRef.current} → ${next} | reason: ${reason}`)
 		followingRef.current = next
 		setIsFollowing(next)
 	}, [])
@@ -56,6 +57,8 @@ export function useScrollBehavior(
 	const cancelFollowUntilRef = useRef(0)
 	const resumeCheckTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 	const pendingPinRef = useRef(false)
+	// Debug: incrementing id to correlate scroll issue/completion log pairs.
+	const scrollDebugIdRef = useRef(0)
 
 	// Find all user feedback messages
 	const userFeedbackMessages = useMemo(() => {
@@ -157,33 +160,50 @@ export function useScrollBehavior(
 	// (ResizeObserver, totalListHeightChanged) and InputSection's textarea-grow
 	// re-pin. rAF-throttled: streaming can fire totalListHeightChanged many times
 	// per frame; coalesce into one scrollTo.
-	const pinToBottom = useCallback(() => {
-		if (!getFollowing()) return
-		if (pendingPinRef.current) return
-		pendingPinRef.current = true
-		requestAnimationFrame(() => {
-			pendingPinRef.current = false
-			if (getFollowing()) {
-				virtuosoRef.current?.scrollTo({ top: Number.MAX_SAFE_INTEGER, behavior: "auto" })
+	const pinToBottom = useCallback(
+		(reason = "unknown") => {
+			if (!getFollowing()) {
+				console.log(`[ScrollDebug] pinToBottom skipped (not following) | reason: ${reason}`)
+				return
 			}
-		})
-	}, [getFollowing])
+			if (pendingPinRef.current) {
+				console.log(`[ScrollDebug] pinToBottom skipped (already pending) | reason: ${reason}`)
+				return
+			}
+			pendingPinRef.current = true
+			const id = ++scrollDebugIdRef.current
+			console.log(`[ScrollDebug] #${id} pinToBottom issued | reason: ${reason}`)
+			requestAnimationFrame(() => {
+				pendingPinRef.current = false
+				if (getFollowing()) {
+					virtuosoRef.current?.scrollTo({ top: Number.MAX_SAFE_INTEGER, behavior: "auto" })
+					console.log(`[ScrollDebug] #${id} pinToBottom completed`)
+				} else {
+					console.log(`[ScrollDebug] #${id} pinToBottom cancelled (following disabled before rAF)`)
+				}
+			})
+		},
+		[getFollowing],
+	)
 
 	// Scroll to the bottom and re-enable following (clears the cancel lock).
 	// The "program/user wants to follow" entry point: turn start, send message,
 	// and the backstop effect on new message groups.
 	const scrollToBottom = useCallback(
-		(smooth = false) => {
-			setFollowing(true)
+		(smooth = false, reason = "unknown") => {
+			setFollowing(true, `scrollToBottom (${reason})`)
 			cancelFollowUntilRef.current = 0
 			if (resumeCheckTimerRef.current) {
 				clearTimeout(resumeCheckTimerRef.current)
 				resumeCheckTimerRef.current = null
 			}
+			const id = ++scrollDebugIdRef.current
+			console.log(`[ScrollDebug] #${id} scrollToBottom issued | smooth: ${smooth} | reason: ${reason}`)
 			virtuosoRef.current?.scrollTo({
 				top: Number.MAX_SAFE_INTEGER,
 				behavior: smooth ? "smooth" : "auto",
 			})
+			console.log(`[ScrollDebug] #${id} scrollToBottom completed`)
 		},
 		[setFollowing],
 	)
@@ -195,7 +215,7 @@ export function useScrollBehavior(
 			return
 		}
 		const onResize = () => {
-			pinToBottom()
+			pinToBottom("ResizeObserver (panel/viewport resize)")
 		}
 		const ro = new ResizeObserver(onResize)
 		ro.observe(scrollerEl)
@@ -206,21 +226,25 @@ export function useScrollBehavior(
 	// Virtuoso's content-height-changed callback. Fires on every item measurement
 	// change (including streaming text growth within the last row).
 	const handleTotalListHeightChanged = useCallback(() => {
-		pinToBottom()
+		pinToBottom("streaming content growth (totalListHeightChanged)")
 	}, [pinToBottom])
 
 	const scrollToMessage = useCallback(
-		(messageIndex: number) => {
+		(messageIndex: number, reason = "unknown") => {
+			const id = ++scrollDebugIdRef.current
+			console.log(`[ScrollDebug] #${id} scrollToMessage issued | index: ${messageIndex} | reason: ${reason}`)
 			setPendingScrollToMessage(messageIndex)
 
 			const targetMessage = messages[messageIndex]
 			if (!targetMessage) {
+				console.log(`[ScrollDebug] #${id} scrollToMessage aborted (target message not found)`)
 				setPendingScrollToMessage(null)
 				return
 			}
 
 			const visibleIndex = visibleMessages.findIndex((msg) => msg.ts === targetMessage.ts)
 			if (visibleIndex === -1) {
+				console.log(`[ScrollDebug] #${id} scrollToMessage aborted (not in visible messages)`)
 				setPendingScrollToMessage(null)
 				return
 			}
@@ -245,7 +269,7 @@ export function useScrollBehavior(
 
 			if (groupIndex !== -1) {
 				setPendingScrollToMessage(null)
-				setFollowing(false)
+				setFollowing(false, `scrollToMessage (${reason})`)
 
 				// Check if this is the first user feedback message (no sticky header would show when scrolling to it)
 				const isFirstUserMessage =
@@ -253,18 +277,57 @@ export function useScrollBehavior(
 
 				const stickyHeaderOffset = isFirstUserMessage ? 0 : STICKY_HEADER_HEIGHT
 
-				// Use scrollToIndex with offset - Virtuoso handles this more reliably than manual scrollTo
+				// Use scrollIntoView (not scrollToIndex) to get the done callback, which fires
+				// when Virtuoso's internal scrollingInProgress flips to false (scroll truly
+				// settled, including retries for virtualization/content growth, with a 1200ms
+				// backstop). The done callback clears the cancel-follow lock so following can
+				// resume at the bottom if the viewport is there, instead of relying on the
+				// fixed 250ms lock that expires mid-smooth-scroll and causes pin/follow races.
+				//
+				// scrollIntoView's options type has no `offset` field (unlike scrollToIndex),
+				// so a custom calculateViewLocation replicates the default visibility check and
+				// injects the sticky-header offset into the returned scrollToIndex location.
 				requestAnimationFrame(() => {
-					virtuosoRef.current?.scrollToIndex({
+					virtuosoRef.current?.scrollIntoView({
 						index: groupIndex,
 						align: "start",
 						behavior: "smooth",
-						offset: -stickyHeaderOffset,
+						calculateViewLocation: ({ itemTop, itemBottom, viewportTop, viewportBottom, locationParams }) => {
+							// Default behavior: scroll only if the item is out of view.
+							if (itemTop < viewportTop) {
+								return { ...locationParams, align: locationParams.align ?? "start", offset: -stickyHeaderOffset }
+							}
+							if (itemBottom > viewportBottom) {
+								return { ...locationParams, align: locationParams.align ?? "end", offset: -stickyHeaderOffset }
+							}
+							return null
+						},
+						done: () => {
+							const lockArmedAt = cancelFollowUntilRef.current - CANCEL_FOLLOW_LOCK_MS
+							const elapsed = lockArmedAt > 0 ? Math.round(performance.now() - lockArmedAt) : -1
+							console.log(
+								`[ScrollDebug] #${id} scrollIntoView done fired (cancel lock held for ${elapsed}ms, baseline=${CANCEL_FOLLOW_LOCK_MS}ms)`,
+							)
+							// Clear the cancel-follow lock so tryResumeFollow is no longer blocked.
+							cancelFollowUntilRef.current = 0
+							if (resumeCheckTimerRef.current) {
+								clearTimeout(resumeCheckTimerRef.current)
+								resumeCheckTimerRef.current = null
+							}
+							// Resume following if the viewport is at the bottom (mirrors
+							// tryResumeFollow's logic, inlined to avoid a dependency-order cycle).
+							if (!getFollowing() && isAtBottomRef.current) {
+								setFollowing(true, `scrollIntoView done (resume at bottom) | scrollToMessage (${reason})`)
+							}
+						},
 					})
+					console.log(`[ScrollDebug] #${id} scrollIntoView dispatched | groupIndex: ${groupIndex}`)
 				})
+			} else {
+				console.log(`[ScrollDebug] #${id} scrollToMessage aborted (group not found)`)
 			}
 		},
-		[messages, visibleMessages, groupedMessages, setFollowing],
+		[messages, visibleMessages, groupedMessages, setFollowing, getFollowing],
 	)
 
 	// scroll when user toggles certain rows
@@ -281,7 +344,7 @@ export function useScrollBehavior(
 			// pointerdown that opened the row, so this is a belt-and-suspenders
 			// write. Programmatic expansions (preserveAutoScroll) keep following on.
 			if (!isCollapsing && !options?.preserveAutoScroll) {
-				setFollowing(false)
+				setFollowing(false, "toggleRowExpansion (user expand)")
 			}
 			// No re-pin on user-initiated collapse: a collapse is triggered by a
 			// click inside the scroller, whose pointerdown already cancelled following
@@ -300,13 +363,13 @@ export function useScrollBehavior(
 	// following was just re-engaged, the next message group will trigger this.
 	useEffect(() => {
 		if (getFollowing() && groupedMessages.length > 0) {
-			scrollToBottom()
+			scrollToBottom(false, "backstop (new message groups)")
 		}
 	}, [getFollowing, groupedMessages.length, scrollToBottom])
 
 	useEffect(() => {
 		if (pendingScrollToMessage !== null) {
-			scrollToMessage(pendingScrollToMessage)
+			scrollToMessage(pendingScrollToMessage, "pending effect")
 		}
 	}, [pendingScrollToMessage, scrollToMessage])
 
@@ -315,23 +378,27 @@ export function useScrollBehavior(
 		if (getFollowing()) return
 		if (!isAtBottomRef.current) return
 		if (performance.now() < cancelFollowUntilRef.current) return
-		setFollowing(true)
+		setFollowing(true, "tryResumeFollow (at bottom after cancel lock)")
 		cancelFollowUntilRef.current = 0
 	}, [getFollowing, setFollowing])
 
 	// Cancels following and arms the fixed cancel lock. Reused by the input
 	// listener and by turn-end's scroll-to-summary (both need to suppress the pin
 	// while a programmatic scroll runs).
-	const cancelFollowing = useCallback(() => {
-		if (!getFollowing()) return
-		setFollowing(false)
-		cancelFollowUntilRef.current = performance.now() + CANCEL_FOLLOW_LOCK_MS
-		if (resumeCheckTimerRef.current) clearTimeout(resumeCheckTimerRef.current)
-		resumeCheckTimerRef.current = setTimeout(() => {
-			resumeCheckTimerRef.current = null
-			tryResumeFollow()
-		}, CANCEL_FOLLOW_LOCK_MS)
-	}, [getFollowing, setFollowing, tryResumeFollow])
+	const cancelFollowing = useCallback(
+		(reason = "unknown") => {
+			if (!getFollowing()) return
+			console.log(`[ScrollDebug] cancelFollowing | reason: ${reason}`)
+			setFollowing(false, `cancelFollowing (${reason})`)
+			cancelFollowUntilRef.current = performance.now() + CANCEL_FOLLOW_LOCK_MS
+			if (resumeCheckTimerRef.current) clearTimeout(resumeCheckTimerRef.current)
+			resumeCheckTimerRef.current = setTimeout(() => {
+				resumeCheckTimerRef.current = null
+				tryResumeFollow()
+			}, CANCEL_FOLLOW_LOCK_MS)
+		},
+		[getFollowing, setFollowing, tryResumeFollow],
+	)
 
 	// Tracks whether the viewport is at the bottom and attempts resume when it
 	// returns there. Does NOT disable following when leaving the bottom — that
@@ -360,15 +427,15 @@ export function useScrollBehavior(
 			// deltaY < 0 = scroll up (toward older messages). Ctrl+wheel is zoom
 			// (pinch gesture), not scroll.
 			if (e.ctrlKey) return
-			if (e.deltaY < 0) cancelFollowing()
+			if (e.deltaY < 0) cancelFollowing("wheel up")
 		}
 		const onKeyDown = (e: KeyboardEvent) => {
 			if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return
-			if (e.key === "ArrowUp" || e.key === "PageUp" || e.key === "Home") cancelFollowing()
+			if (e.key === "ArrowUp" || e.key === "PageUp" || e.key === "Home") cancelFollowing(`keydown ${e.key}`)
 		}
 		const onPointerDown = () => {
 			// Any click on the scroll area may stop following.
-			cancelFollowing()
+			cancelFollowing("pointerdown")
 		}
 
 		el.addEventListener("wheel", onWheel, { passive: true })

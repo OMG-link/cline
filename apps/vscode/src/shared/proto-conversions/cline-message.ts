@@ -1,4 +1,4 @@
-import { ClineAsk as AppClineAsk, ClineMessage as AppClineMessage, ClineSay as AppClineSay } from "@shared/ExtensionMessage"
+import { ClineAsk as AppClineAsk, ClineMessage as AppClineMessage, ClineSay as AppClineSay, type CommandStateStatus } from "@shared/ExtensionMessage"
 import { ClineAsk, ClineMessageType, ClineSay, ClineMessage as ProtoClineMessage, CommandStatus } from "@shared/proto/cline/ui"
 
 // Helper function to convert ClineAsk string to enum
