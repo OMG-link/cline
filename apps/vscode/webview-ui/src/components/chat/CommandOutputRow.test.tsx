@@ -1,10 +1,15 @@
 import { act, render, waitFor } from "@testing-library/react"
 import { describe, expect, it, vi } from "vitest"
-import { CommandOutputContent, aggregateDisplayStatus } from "./CommandOutputRow"
+import { CommandOutputContent, CommandOutputRow, aggregateDisplayStatus, formatTime } from "./CommandOutputRow"
 import type { CommandState } from "@shared/ExtensionMessage"
+import type { ReactNode } from "react"
 
 vi.mock("../common/CodeBlock", () => ({
 	default: ({ source }: { source: string }) => <pre>{source}</pre>,
+}))
+
+vi.mock("@/components/ui/button", () => ({
+	Button: ({ children, ...props }: { children?: ReactNode }) => <button {...props}>{children}</button>,
 }))
 
 describe("CommandOutputContent", () => {
@@ -76,6 +81,40 @@ describe("CommandOutputContent", () => {
 
 		await act(async () => {})
 		expect(onOutputChange).not.toHaveBeenCalled()
+	})
+})
+
+describe("CommandOutputRow timeout display", () => {
+	const baseProps = {
+		isOutputFullyExpanded: false,
+		message: { ts: 1, type: "say" as const, say: "command" as const, text: "echo hi" },
+		setIsOutputFullyExpanded: vi.fn(),
+	}
+
+	it("shows a static pending timeout without running progress", () => {
+		const { container } = render(
+			<CommandOutputRow
+				{...baseProps}
+				commandStates={[{ status: "pending" }]}
+				commandTimeoutMs={299000}
+			/>,
+		)
+		const text = container.textContent ?? ""
+		expect(text).toContain("Pending")
+		expect(text).toContain("4:59")
+		expect(text).not.toContain("0:00/4:59")
+	})
+
+	it("keeps elapsed/total progress for running commands", () => {
+		const { container } = render(
+			<CommandOutputRow
+				{...baseProps}
+				commandStates={[{ status: "running", duration: 1000 }]}
+				commandTimeoutMs={299000}
+			/>,
+		)
+		expect(container.textContent).toContain("Running")
+		expect(container.textContent).toContain("0:01/4:59")
 	})
 })
 
@@ -191,5 +230,15 @@ describe("aggregateDisplayStatus", () => {
 			label: "Unknown",
 			color: "description",
 		})
+	})
+})
+
+describe("formatTime", () => {
+	it.each([
+		[299000, "4:59"],
+		[300000, "5:00"],
+		[1000, "0:01"],
+	])("formats %s milliseconds as %s", (timeoutMs, expected) => {
+		expect(formatTime(timeoutMs)).toBe(expected)
 	})
 })

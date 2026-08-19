@@ -209,6 +209,12 @@ export const CommandOutputRow = memo(
 		const effectiveDisplayStatus = isOvertime
 			? { label: "Timeout", color: "error" }
 			: displayStatus
+		const isPending = commandStates?.length
+			? commandStates.every((cs) => cs.status === COMMAND_STATUS.PENDING)
+			: effectiveDisplayStatus.label === "Pending"
+		const pendingTimeoutText = isPending && commandTimeoutMs !== undefined ? formatTime(commandTimeoutMs) : undefined
+		const showPendingTimeout = pendingTimeoutText !== undefined
+		const showProgress = !isPending && commandTimeoutMs !== undefined
 		const showCancelButton =
 			(anyRunning || commandStates?.some((cs) => cs.status === COMMAND_STATUS.PENDING)) &&
 			typeof onCancelCommand === "function" &&
@@ -246,7 +252,10 @@ export const CommandOutputRow = memo(
 										"text-error": effectiveDisplayStatus.color === "error",
 									})}>
 									{effectiveDisplayStatus.label}
-									{commandTimeoutMs != null && (
+					{showPendingTimeout && (
+						<span className="text-description ml-1">{pendingTimeoutText}</span>
+									)}
+									{showProgress && (
 										<span className="text-description ml-1">
 											{formatTime(displayDurationMs)}/{formatTime(commandTimeoutMs)}
 										</span>
@@ -347,7 +356,7 @@ export function aggregateDisplayStatus(states: CommandState[]): DisplayStatus {
 	return { label: "Running", color: "success" }
 }
 
-function formatTime(ms: number): string {
+export function formatTime(ms: number): string {
 	const totalSeconds = Math.floor(ms / 1000)
 	const minutes = Math.floor(totalSeconds / 60)
 	const seconds = totalSeconds % 60

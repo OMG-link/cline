@@ -1087,6 +1087,20 @@ function getBooleanField(input: Record<string, unknown> | undefined, field: stri
 }
 
 /**
+ * Return the agent's explicit timeout for the approval UI.
+ *
+ * Approval happens before execution validates or resolves tool defaults, so the
+ * approval UI uses only the timeout explicitly supplied by the agent. The later
+ * `started` event provides the timeout used by the running command.
+ */
+function getExplicitCommandTimeoutMs(input: unknown): number | undefined {
+	const parsedInput = parseToolInput(input)
+	if (!parsedInput || !Object.hasOwn(parsedInput, "timeoutMs")) return undefined
+	const timeoutMs = parsedInput.timeoutMs
+	return typeof timeoutMs === "number" && Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : undefined
+}
+
+/**
  * Extract raw text output from an SDK tool's output.
  *
  * The SDK's run_commands tool returns `ToolOperationResult[]` where each
@@ -1274,6 +1288,8 @@ export function buildToolApprovalAskMessage(toolName: string, input: unknown, ts
 			text: extractCommandText(input),
 			partial: false,
 			commandStates: Array.from({ length: extractCommandCount(input) }, () => ({ status: "pending" as const })),
+			// Keep the approval value separate from the execution timeout emitted by `started`.
+			commandTimeoutMs: getExplicitCommandTimeoutMs(input),
 		}
 	}
 
@@ -1482,6 +1498,8 @@ function translateAgentEvent(event: AgentEvent, state: MessageTranslatorState): 
 							text: `${commandText}\n${COMMAND_OUTPUT_STRING}`,
 							partial: true,
 							commandStates: state.getCommandStates(),
+							// This initializes the approved request's display; `started` replaces it with the execution value.
+							commandTimeoutMs: getExplicitCommandTimeoutMs(input),
 						})
 						break
 					}

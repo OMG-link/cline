@@ -126,6 +126,29 @@ describe("MessageTranslatorState", () => {
 	})
 })
 
+describe("buildToolApprovalAskMessage command timeout", () => {
+	it("preserves an explicitly supplied timeout without applying defaults", () => {
+		// 299000 is intentionally different from the 300000ms tool default.
+		const message = buildToolApprovalAskMessage("run_commands", { commands: ["echo hi"], timeoutMs: 299000 }, 1)
+		expect(message.commandTimeoutMs).toBe(299000)
+	})
+
+	it("does not add a timeout when the agent omitted it", () => {
+		const message = buildToolApprovalAskMessage("run_commands", { commands: ["echo hi"] }, 1)
+		expect(message.commandTimeoutMs).toBeUndefined()
+	})
+
+	it("ignores a string timeout", () => {
+		const message = buildToolApprovalAskMessage("run_commands", { commands: ["echo hi"], timeoutMs: "1000" }, 1)
+		expect(message.commandTimeoutMs).toBeUndefined()
+	})
+
+	it.each([Number.NaN, Number.POSITIVE_INFINITY, -1, 0])("ignores an unsafe numeric timeout: %s", (timeoutMs) => {
+		const message = buildToolApprovalAskMessage("run_commands", { commands: ["echo hi"], timeoutMs }, 1)
+		expect(message.commandTimeoutMs).toBeUndefined()
+	})
+})
+
 // ---------------------------------------------------------------------------
 // translateSessionEvent — chunk events
 // ---------------------------------------------------------------------------
@@ -313,7 +336,8 @@ describe("translateSessionEvent — agent_event content_start", () => {
 						contentType: "tool",
 						toolName: "execute_command",
 						toolCallId: "command-call",
-						input: { command: "npm test" },
+					// 299000 is intentionally different from the 300000ms tool default.
+						input: { command: "npm test", timeoutMs: 299000 },
 					} as AgentEvent,
 				},
 			},
@@ -325,6 +349,7 @@ describe("translateSessionEvent — agent_event content_start", () => {
 			type: "say",
 			say: "command",
 			partial: true,
+			commandTimeoutMs: 299000,
 		})
 
 		const endResult = translateSessionEvent(
